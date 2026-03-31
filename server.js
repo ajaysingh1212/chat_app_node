@@ -85,14 +85,23 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 4 * 1024 * 1024 * 1024 }, // 4GB
   fileFilter: (req, file, cb) => {
-    const ok = ['image/', 'video/', 'audio/', 'application/pdf', 'application/zip',
-                'application/msword', 'application/vnd.openxmlformats', 'text/'];
-    cb(null, ok.some(t => file.mimetype.startsWith(t)));
+    const allowed = [
+      'image/',       // all images
+      'video/',       // all videos
+      'audio/',       // all audio
+      'application/', // pdf, zip, docs, etc.
+      'text/'         // text files
+    ];
+
+    const isAllowed = allowed.some(type =>
+      file.mimetype.startsWith(type)
+    );
+
+    cb(null, isAllowed);
   }
 });
-
 // ── JWT Middleware ─────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
