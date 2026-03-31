@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ChatApp</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- ══ AUTH SCREEN ══════════════════════════════════════════════════════════ -->
+<div class="auth-screen" id="authScreen">
+  <div class="auth-bg-art"></div>
+  <div class="auth-card">
+    <div class="auth-logo">
+      <svg viewBox="0 0 44 44" width="56" height="56">
+        <circle cx="22" cy="22" r="22" fill="url(#lg1)"/>
+        <defs><linearGradient id="lg1" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#00bfa5"/><stop offset="100%" stop-color="#0097a7"/></linearGradient></defs>
+        <path d="M22 9C14.82 9 9 14.82 9 22c0 2.32.61 4.51 1.67 6.4L9 35l6.84-1.62A12.93 12.93 0 0022 35c7.18 0 13-5.82 13-13S29.18 9 22 9zm6.7 17.9c-.28.79-1.64 1.52-2.26 1.6-.62.09-1.2.4-4.03-.84-3.43-1.5-5.63-5-5.8-5.24-.17-.23-1.38-1.84-1.38-3.5s.87-2.49 1.18-2.83c.32-.34.68-.42.91-.42l.65.01c.2 0 .48-.08.75.58l1.12 2.78c.1.26.05.56-.1.79l-.43.6-.43.52c.28.49 1.16 1.9 2.49 2.95 1.7 1.33 3.14 1.74 3.59 1.94.44.2.7.16.96-.1l.78-.92c.25-.32.5-.26.84-.15l2.41.94c.35.13.57.2.66.33.09.12.09.68-.2 1.47z" fill="white"/>
+      </svg>
+    </div>
+    <h1 class="auth-title">ChatApp</h1>
+    <p class="auth-subtitle">Fast. Secure. Private.</p>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login">Sign In</button>
+      <button class="auth-tab" data-tab="register">Sign Up</button>
+    </div>
+    <div class="auth-form" id="loginForm">
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="loginPassword" placeholder="Your password" autocomplete="current-password">
+      </div>
+      <p class="auth-error" id="loginError"></p>
+      <button class="auth-submit" id="loginBtn">Sign In</button>
+    </div>
+    <div class="auth-form" id="registerForm" style="display:none">
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="regUsername" placeholder="YourName" maxlength="30" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="regEmail" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label>Password <span style="color:var(--ts)">min 6 chars</span></label>
+        <input type="password" id="regPassword" placeholder="Min. 6 characters" autocomplete="new-password">
+      </div>
+      <p class="auth-error" id="registerError"></p>
+      <button class="auth-submit" id="registerBtn">Create Account</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ INCOMING CALL ═════════════════════════════════════════════ -->
+<div class="call-overlay" id="incomingCallScreen" style="display:none">
+  <div class="call-card incoming">
+    <div class="call-avatar" id="incomingAvatarEl">?</div>
+    <div class="call-caller-name" id="incomingCallerName">Unknown</div>
+    <div class="call-type-label" id="incomingCallType">Incoming call</div>
+    <div class="call-actions">
+      <button class="call-action-btn decline" id="rejectCallBtn" title="Decline">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.67 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 01-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a1.003 1.003 0 01-1.41 0c-.8-.73-1.69-1.36-2.67-1.85a.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" fill="white"/></svg>
+        <span>Decline</span>
+      </button>
+      <button class="call-action-btn accept-audio" id="acceptCallBtn" title="Accept" style="display:none">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" fill="white"/></svg>
+        <span>Audio</span>
+      </button>
+      <button class="call-action-btn accept-video" id="acceptVideoCallBtn" title="Accept Video" style="display:none">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" fill="white"/></svg>
+        <span>Video</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ INCOMING ON CALL BANNER ══════════════════════════════════════ -->
+<div class="incoming-on-call-banner" id="incomingOnCallBanner" style="display:none">
+  <div class="ioc-info">
+    <div class="ioc-avatar" id="iocAvatar">?</div>
+    <div>
+      <div class="ioc-name" id="iocName">Unknown</div>
+      <div class="ioc-type" id="iocType">Incoming call</div>
+    </div>
+  </div>
+  <div class="ioc-actions">
+    <button class="ioc-btn ioc-decline" id="iocDecline" title="Decline">✕</button>
+    <button class="ioc-btn ioc-hold-accept" id="iocHoldAccept" title="Hold & Accept">Hold & Accept</button>
+    <button class="ioc-btn ioc-cut-accept" id="iocCutAccept" title="End & Accept">End & Accept</button>
+  </div>
+</div>
+
+<!-- ══ OUTGOING CALL ════════════════════════════════════════════════ -->
+<div class="call-overlay" id="outgoingCallScreen" style="display:none">
+  <div class="call-card outgoing">
+    <div class="call-avatar" id="outgoingAvatarEl">?</div>
+    <div class="call-caller-name" id="outgoingCallerName">...</div>
+    <div class="call-type-label" id="outgoingCallTypeLabel">Calling...</div>
+    <div class="call-ringing-dots"><span></span><span></span><span></span></div>
+    <div class="call-actions">
+      <button class="call-action-btn decline" id="cancelOutgoingBtn">
+        <svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.67 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 01-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a1.003 1.003 0 01-1.41 0c-.8-.73-1.69-1.36-2.67-1.85a.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" fill="white"/></svg>
+        <span>Cancel</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ACTIVE CALL SCREEN ═══════════════════════════════════════════ -->
+<div class="active-call-screen" id="activeCallScreen" style="display:none">
+  <div class="call-video-area" id="callVideoArea" style="display:none">
+    <div class="remote-videos-grid" id="remoteVideosGrid"></div>
+    <div class="local-video-pip" id="localVideoPip">
+      <video id="localVideo" autoplay muted playsinline></video>
+      <span class="pip-label">You</span>
+      <button class="cam-flip-btn" id="camFlipBtn" title="Flip Camera">
+        <svg viewBox="0 0 24 24" width="16" height="16"><path d="M20 5h-3.17L15 3H9L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-8 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.65 0-3 1.35-3 3s1.35 3 3 3 3-1.35 3-3-1.35-3-3-3z" fill="white"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="audio-call-display" id="audioCallDisplay">
+    <div class="audio-call-avatar" id="audioCallAvatar">A</div>
+    <div class="audio-call-name" id="audioCallName">...</div>
+    <div class="audio-call-duration" id="callDuration">00:00</div>
+    <div class="call-signal-bars" id="callSignalBars"><span></span><span></span><span></span><span></span></div>
+  </div>
+  <div class="active-call-controls">
+    <button class="acall-btn" id="aCallMuteBtn" title="Mute">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm-1-9c0-.55.45-1 1-1s1 .45 1 1v6c0 .55-.45 1-1 1s-1-.45-1-1V5zm6 6c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-2.08c3.39-.49 6-3.39 6-6.92h-2z" fill="currentColor"/></svg>
+      <span>Mute</span>
+    </button>
+    <button class="acall-btn" id="aCallVideoBtn" title="Camera" style="display:none">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/></svg>
+      <span>Camera</span>
+    </button>
+    <button class="acall-btn" id="aCallMinimizeBtn" title="Minimize">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M19 13H5v-2h14v2z" fill="currentColor"/></svg>
+      <span>Minimize</span>
+    </button>
+    <button class="acall-btn" id="aCallAddBtn" title="Add to call" style="display:none">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
+      <span>Add</span>
+    </button>
+    <button class="acall-btn end-call-red" id="activeEndCallBtn" title="End Call">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.67 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 01-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a1.003 1.003 0 01-1.41 0c-.8-.73-1.69-1.36-2.67-1.85a.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" fill="currentColor"/></svg>
+      <span>End</span>
+    </button>
+  </div>
+</div>
+
+<!-- ══ MINI CALL PIP ════════════════════════════════════════════════ -->
+<div class="mini-call-pip" id="miniCallPip" style="display:none">
+  <div class="mini-pip-video-wrap">
+    <video id="miniRemoteVideo" autoplay playsinline></video>
+    <div class="mini-pip-avatar" id="miniPipAvatar">?</div>
+  </div>
+  <div class="mini-pip-info">
+    <span class="mini-pip-name" id="miniPipName">Call</span>
+    <span class="mini-pip-dur" id="miniPipDur">00:00</span>
+  </div>
+  <div class="mini-pip-btns">
+    <button class="mini-pip-btn expand" id="miniPipExpand" title="Expand">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z" fill="currentColor"/></svg>
+    </button>
+    <button class="mini-pip-btn end" id="miniPipEnd" title="End Call">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.67 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08a.99.99 0 01-.29-.7c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48a1.003 1.003 0 01-1.41 0c-.8-.73-1.69-1.36-2.67-1.85a.996.996 0 01-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" fill="currentColor"/></svg>
+    </button>
+  </div>
+</div>
+
+<!-- ══ MAIN APP ═════════════════════════════════════════════════════ -->
+<div class="app-container" id="appContainer" style="display:none">
+
+  <!-- LEFT SIDEBAR -->
+  <aside class="sidebar" id="sidebarEl">
+
+    <div class="sidebar-header">
+      <div class="sidebar-user-info" id="sidebarUserInfo">
+        <div class="my-avatar" id="myAvatarEl">A</div>
+        <span class="my-username-label" id="myUsernameLabel">Me</span>
+      </div>
+      <div class="sidebar-actions">
+        <button class="icon-btn" id="newChatBtn" title="New Chat">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" id="newGroupBtn" title="New Group">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Desktop 4-tab bar -->
+    <div class="desktop-tab-bar" id="desktopTabBar">
+      <button class="dtab active" data-panel="chats" title="Chats">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" fill="currentColor"/></svg>
+        <span>Chats</span>
+      </button>
+      <button class="dtab" data-panel="status" title="Status">
+        <svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
+        <span>Status</span>
+      </button>
+      <button class="dtab" data-panel="calls" title="Calls">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" fill="currentColor"/></svg>
+        <span>Calls</span>
+      </button>
+      <button class="dtab" data-panel="settings" title="Settings">
+        <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/></svg>
+        <span>Settings</span>
+      </button>
+    </div>
+
+    <!-- Search bar -->
+    <div class="search-bar" id="searchBarWrap">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor"/></svg>
+      <input type="text" id="searchInput" placeholder="Search chats">
+    </div>
+
+    <!-- ── Chats panel ── -->
+    <div class="sidebar-panel active" id="panelChats">
+      <div class="chat-list" id="chatList"></div>
+    </div>
+
+    <!-- ── Status panel ── -->
+    <div class="sidebar-panel" id="panelStatus">
+      <div class="my-status-row" id="myStatusRow">
+        <div class="my-status-avatar-wrap">
+          <div class="my-status-avatar" id="myStatusAvatar">A</div>
+          <button class="status-add-plus" id="statusAddPlusBtn" title="Add Status">+</button>
+        </div>
+        <div class="my-status-info">
+          <div class="my-status-title">My Status</div>
+          <div class="my-status-sub" id="myStatusSub">Tap to add status update</div>
+        </div>
+      </div>
+      <div class="status-section-divider">Recent updates</div>
+      <div id="statusContactsList"></div>
+      <div class="empty-panel-hint" id="statusEmptyHint" style="display:none">
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5"/></svg>
+        <p>No status updates yet</p>
+      </div>
+    </div>
+
+    <!-- ── Calls panel ── -->
+    <div class="sidebar-panel" id="panelCalls">
+      <div class="call-history-list" id="callHistoryList">
+        <div class="empty-panel-hint">
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="currentColor" stroke-width="1.5"/></svg>
+          <p>No call history yet</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Settings panel ── -->
+    <div class="sidebar-panel" id="panelSettings">
+      <div class="settings-list">
+        <div class="settings-section-label">Account</div>
+        <button class="settings-item" id="settingsProfile">
+          <div class="settings-icon si-teal"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" fill="currentColor"/></svg></div>
+          <div class="settings-item-text"><span>Profile</span><small>Edit your name, photo & about</small></div>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg>
+        </button>
+        <button class="settings-item" id="settingsAccount">
+          <div class="settings-icon si-blue"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z" fill="currentColor"/></svg></div>
+          <div class="settings-item-text"><span>Account</span><small>Security, 2-step verification</small></div>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg>
+        </button>
+        <button class="settings-item" id="settingsPrivacy">
+          <div class="settings-icon si-green"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z" fill="currentColor"/></svg></div>
+          <div class="settings-item-text"><span>Privacy</span><small>Last seen, profile photo, about</small></div>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg>
+        </button>
+        <div class="settings-section-label" style="margin-top:10px">App</div>
+        <button class="settings-item" id="settingsChats">
+          <div class="settings-icon si-orange"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" fill="currentColor"/></svg></div>
+          <div class="settings-item-text"><span>Chats</span><small>Theme, wallpaper, notifications</small></div>
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" fill="currentColor"/></svg>
+        </button>
+        <div class="settings-section-label" style="margin-top:10px">Danger Zone</div>
+        <button class="settings-item danger-item" id="settingsLogout">
+          <div class="settings-icon si-red"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5-5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" fill="currentColor"/></svg></div>
+          <div class="settings-item-text"><span>Logout</span></div>
+        </button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- MAIN AREA -->
+  <main class="main-area" id="mainArea">
+
+    <!-- Chat Empty State -->
+    <div class="chat-empty-state" id="chatEmptyState">
+      <div class="empty-icon">
+        <svg viewBox="0 0 80 80" width="80" height="80" fill="none" opacity=".12">
+          <circle cx="40" cy="40" r="38" stroke="currentColor" stroke-width="2"/>
+          <path d="M24 32h32M24 40h22M24 48h28" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h2>ChatApp</h2>
+      <p>Select a chat to start messaging</p>
+      <p class="empty-sub">Your messages are end-to-end encrypted</p>
+    </div>
+
+    <!-- Locked Chat Screen -->
+    <div class="locked-chat-screen" id="lockedChatScreen" style="display:none">
+      <div class="locked-chat-content">
+        <div style="font-size:52px;margin-bottom:16px">🔒</div>
+        <h3 style="font-size:20px;font-weight:700;margin-bottom:8px">This chat is locked</h3>
+        <p style="font-size:13px;color:var(--ts);margin-bottom:20px">Enter your PIN to unlock</p>
+        <input type="password" id="lockedChatPinInput" class="locked-pin-input" placeholder="• • • •" maxlength="4" inputmode="numeric">
+        <p class="auth-error" id="lockedChatPinError" style="margin-top:8px"></p>
+        <button class="auth-submit" id="lockedChatUnlockBtn" style="margin-top:12px;width:200px">Unlock</button>
+      </div>
+    </div>
+
+    <!-- Chat Header -->
+    <div class="chat-header" id="chatHeader" style="display:none">
+      <button class="back-btn" id="backBtn" title="Back">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg>
+      </button>
+      <div class="chat-header-info" id="chatHeaderInfo">
+        <div class="chat-avatar-sm" id="chatHeaderAvatar">A</div>
+        <div class="chat-header-text">
+          <div class="chat-header-name" id="chatHeaderName">Name</div>
+          <div class="chat-header-status" id="chatHeaderStatus">online</div>
+        </div>
+      </div>
+      <div class="chat-header-actions">
+        <button class="icon-btn" id="headerAudioCallBtn" title="Voice Call" style="display:none">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" id="headerVideoCallBtn" title="Video Call" style="display:none">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" id="headerGroupAudioCallBtn" title="Group Voice" style="display:none">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" id="headerGroupVideoCallBtn" title="Group Video" style="display:none">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" id="addToCallBtn" title="Add to call" style="display:none">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" fill="currentColor"/></svg>
+        </button>
+        <button class="icon-btn" id="chatInfoBtn" title="Contact Info">
+          <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Messages Area -->
+    <div class="messages-area" id="messagesArea" style="display:none">
+      <div class="messages-list" id="messagesList"></div>
+      <div class="typing-bar" id="typingBar" style="display:none">
+        <div class="typing-dots"><span></span><span></span><span></span></div>
+        <span class="typing-text" id="typingText">typing...</span>
+      </div>
+    </div>
+
+    <!-- Input Bar -->
+    <div class="input-bar" id="inputBar" style="display:none">
+      <input type="file" id="fileInput" accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.zip,.txt" style="display:none">
+      <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+      <div class="input-attach-menu" id="inputAttachMenu" style="display:none">
+        <button class="attach-opt" id="attachFileOpt">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5V6H9v9.5a2.5 2.5 0 005 0V5c0-2.21-1.79-4-4-4S6 2.79 6 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" fill="currentColor"/></svg>
+          <span>File</span>
+        </button>
+        <button class="attach-opt" id="attachCameraOpt">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 5h-3.17L15 3H9L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-8 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" fill="currentColor"/></svg>
+          <span>Camera</span>
+        </button>
+        <button class="attach-opt" id="attachLocationOpt">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="currentColor"/></svg>
+          <span>Location</span>
+        </button>
+        <button class="attach-opt" id="attachContactOpt">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 0H4v2h16V0zM4 24h16v-2H4v2zM20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm-8 2.75c1.24 0 2.25 1.01 2.25 2.25S13.24 11.25 12 11.25 9.75 10.24 9.75 9 10.76 6.75 12 6.75zM17 17H7v-1.5c0-1.67 3.33-2.5 5-2.5s5 .83 5 2.5V17z" fill="currentColor"/></svg>
+          <span>Contact</span>
+        </button>
+      </div>
+      <button class="input-icon-btn" id="attachBtn" title="Attach">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M16.5 6v11.5c0 2.21-1.79 4-4 4s-4-1.79-4-4V5a2.5 2.5 0 015 0v10.5c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5V6H9v9.5a2.5 2.5 0 005 0V5c0-2.21-1.79-4-4-4S6 2.79 6 5v12.5c0 3.04 2.46 5.5 5.5 5.5s5.5-2.46 5.5-5.5V6h-1.5z" fill="currentColor"/></svg>
+      </button>
+      <div class="message-input-wrapper">
+        <textarea id="messageInput" placeholder="Type a message" rows="1"></textarea>
+      </div>
+      <button class="send-btn" id="sendBtn">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor"/></svg>
+      </button>
+    </div>
+
+    <!-- ── PROFILE INFO PANEL (right side) ── -->
+    <div class="profile-info-panel" id="profileInfoPanel">
+      <div class="pip-header">
+        <button class="pip-close-btn" id="pipCloseBtn">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg>
+        </button>
+        <h3 id="pipHeaderTitle">Contact Info</h3>
+      </div>
+      <div class="pip-body" id="pipBody">
+        <!-- Hero -->
+        <div class="pip-hero">
+          <div class="pip-hero-avatar" id="pipHeroAvatar">A</div>
+          <div class="pip-hero-name" id="pipHeroName">Name</div>
+          <div class="pip-hero-status" id="pipHeroStatus">offline</div>
+        </div>
+        <!-- Info rows -->
+        <div class="pip-info-card" id="pipInfoCard">
+          <div class="pip-info-row" id="pipRowPhone" style="display:none">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" fill="currentColor"/></svg>
+            <div><div class="pip-info-val" id="pipPhoneVal"></div><small>Phone</small></div>
+          </div>
+          <div class="pip-info-row" id="pipRowEmail">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" fill="currentColor"/></svg>
+            <div><div class="pip-info-val" id="pipEmailVal"></div><small>Email</small></div>
+          </div>
+          <div class="pip-info-row" id="pipRowAbout" style="display:none">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" fill="currentColor"/></svg>
+            <div><div class="pip-info-val" id="pipAboutVal"></div><small>About</small></div>
+          </div>
+        </div>
+        <!-- Quick Actions -->
+        <div class="pip-quick-actions" id="pipQuickActions">
+          <button class="pip-qa-btn" id="pipShareContactBtn">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z" fill="currentColor"/></svg>
+            Share Contact
+          </button>
+          <button class="pip-qa-btn danger" id="pipBlockBtn">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z" fill="currentColor"/></svg>
+            <span id="pipBlockLabel">Block</span>
+          </button>
+        </div>
+        <!-- Media section -->
+        <div class="pip-card">
+          <div class="pip-card-hd">
+            <span>Media, Links & Docs</span>
+            <span class="pip-badge" id="pipMediaCount">0</span>
+          </div>
+          <div class="pip-media-grid" id="pipMediaGrid"></div>
+          <div class="pip-no-media" id="pipNoMedia" style="display:none">No media shared yet</div>
+        </div>
+        <!-- Common Groups (1-1 only) -->
+        <div class="pip-card" id="pipGroupsCard" style="display:none">
+          <div class="pip-card-hd">Groups in common</div>
+          <div id="pipGroupsList"></div>
+        </div>
+        <!-- Chat Settings -->
+        <div class="pip-card">
+          <div class="pip-card-hd">Chat Settings</div>
+          <!-- Disappearing messages -->
+          <div class="pip-setting-row">
+            <div class="psr-info">
+              <span>Disappearing Messages</span>
+              <small id="pipDMHint">Off</small>
+            </div>
+            <select class="pip-select" id="pipDMSelect">
+              <option value="off">Off</option>
+              <option value="24h">24 hours</option>
+              <option value="7d">7 days</option>
+              <option value="30d">30 days</option>
+            </select>
+          </div>
+          <!-- Theme -->
+          <div class="pip-setting-row">
+            <span>Chat Theme</span>
+            <div class="pip-theme-row" id="pipThemeRow">
+              <div class="theme-swatch active" data-theme="default" style="background:#00bfa5" title="Default"></div>
+              <div class="theme-swatch" data-theme="ocean" style="background:#0a9dcc" title="Ocean"></div>
+              <div class="theme-swatch" data-theme="sunset" style="background:#e8622e" title="Sunset"></div>
+              <div class="theme-swatch" data-theme="forest" style="background:#2ecc71" title="Forest"></div>
+              <div class="theme-swatch" data-theme="midnight" style="background:#6c3483" title="Midnight"></div>
+              <div class="theme-swatch" data-theme="rose" style="background:#e91e8c" title="Rose"></div>
+            </div>
+          </div>
+          <!-- Lock chat -->
+          <div class="pip-setting-row">
+            <div class="psr-info">
+              <span>Lock Chat</span>
+              <small>Require PIN to open</small>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="pipLockToggle">
+              <span class="toggle-knob"></span>
+            </label>
+          </div>
+          <div id="pipLockPinWrap" style="display:none;padding:0 0 8px">
+            <div class="settings-form-group">
+              <label>4-Digit PIN</label>
+              <input type="password" id="pipLockPinInput" placeholder="Enter PIN" maxlength="4" inputmode="numeric">
+            </div>
+            <button class="save-btn" id="pipSaveLockBtn">Set PIN</button>
+          </div>
+        </div>
+        <!-- Actions -->
+        <div class="pip-card pip-actions-card">
+          <button class="pip-action-row" id="pipExportBtn">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z" fill="currentColor"/></svg>
+            Export Chat
+          </button>
+          <button class="pip-action-row" id="pipClearBtn">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+            Clear Chat
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SETTINGS SUB-PANELS ── -->
+    <div class="settings-sub-panel" id="subProfile" style="display:none">
+      <div class="sub-panel-header">
+        <button class="sub-back-btn" data-back="settings"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg></button>
+        <h3>Profile</h3>
+      </div>
+      <div class="sub-panel-body">
+        <div class="profile-avatar-edit">
+          <div class="profile-big-avatar" id="profileBigAvatar">A</div>
+          <button class="change-photo-btn" id="changePhotoBtn">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M20 5h-3.17L15 3H9L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-8 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" fill="currentColor"/></svg>
+            Change Photo
+          </button>
+          <input type="file" id="profilePicInput" accept="image/*" style="display:none">
+        </div>
+        <div class="settings-form-group">
+          <label>Display Name</label>
+          <input type="text" id="profileNameInput" maxlength="30" placeholder="Your name">
+        </div>
+        <div class="settings-form-group">
+          <label>About</label>
+          <input type="text" id="profileAboutInput" maxlength="200" placeholder="Hey there! I am using ChatApp.">
+          <small>0/200</small>
+        </div>
+        <div class="settings-form-group">
+          <label>Phone Number</label>
+          <input type="tel" id="profilePhoneInput" maxlength="20" placeholder="+91 98765 43210">
+        </div>
+        <button class="save-btn" id="saveProfileBtn">Save Profile</button>
+      </div>
+    </div>
+
+    <div class="settings-sub-panel" id="subAccount" style="display:none">
+      <div class="sub-panel-header">
+        <button class="sub-back-btn" data-back="settings"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg></button>
+        <h3>Account</h3>
+      </div>
+      <div class="sub-panel-body">
+        <div class="settings-section-label">Security</div>
+        <div class="settings-toggle-row">
+          <div><span>Two-Step Verification</span><small>Set a PIN for extra security</small></div>
+          <label class="toggle-switch"><input type="checkbox" id="twoStepToggle"><span class="toggle-knob"></span></label>
+        </div>
+        <div id="twoStepPinRow" style="display:none">
+          <div class="settings-form-group"><label>New PIN (6 digits)</label><input type="password" id="twoStepPinInput" maxlength="6" pattern="\d{6}" placeholder="123456"></div>
+          <button class="save-btn" id="saveTwoStepBtn">Set PIN</button>
+        </div>
+        <div class="settings-section-label" style="margin-top:14px">Change Credentials</div>
+        <div class="settings-form-group"><label>New Email</label><input type="email" id="newEmailInput" placeholder="new@example.com"></div>
+        <div class="settings-form-group"><label>Current Password (required)</label><input type="password" id="changeEmailCurPass" placeholder="Your current password"></div>
+        <button class="save-btn" id="changeEmailBtn">Change Email</button>
+        <div class="settings-section-label" style="margin-top:14px">Change Password</div>
+        <div class="settings-form-group"><label>Current Password</label><input type="password" id="curPassInput" placeholder="Current password"></div>
+        <div class="settings-form-group"><label>New Password</label><input type="password" id="newPassInput" placeholder="New password (min 6)"></div>
+        <button class="save-btn" id="changePassBtn">Change Password</button>
+        <div class="settings-section-label danger" style="margin-top:20px">Danger Zone</div>
+        <button class="danger-action-btn" id="deleteAccountBtn">Delete My Account</button>
+      </div>
+    </div>
+
+    <div class="settings-sub-panel" id="subPrivacy" style="display:none">
+      <div class="sub-panel-header">
+        <button class="sub-back-btn" data-back="settings"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg></button>
+        <h3>Privacy</h3>
+      </div>
+      <div class="sub-panel-body">
+        <div class="settings-section-label">Who can see my info</div>
+        <div class="privacy-row"><span>Last Seen</span><select id="privLastSeen" class="privacy-select"><option value="everyone">Everyone</option><option value="contacts">My Contacts</option><option value="nobody">Nobody</option></select></div>
+        <div class="privacy-row"><span>Profile Photo</span><select id="privProfilePic" class="privacy-select"><option value="everyone">Everyone</option><option value="contacts">My Contacts</option><option value="nobody">Nobody</option></select></div>
+        <div class="privacy-row"><span>About</span><select id="privAbout" class="privacy-select"><option value="everyone">Everyone</option><option value="contacts">My Contacts</option><option value="nobody">Nobody</option></select></div>
+        <div class="settings-section-label" style="margin-top:14px">Groups</div>
+        <div class="privacy-row"><span>Who can add me</span><select id="privGroupAdd" class="privacy-select"><option value="everyone">Everyone</option><option value="contacts">My Contacts</option><option value="admins">Admins Only</option></select></div>
+        <div class="settings-section-label" style="margin-top:14px">Location</div>
+        <div class="settings-toggle-row">
+          <div><span>Live Location Sharing</span><small>Allow sharing location in chats</small></div>
+          <label class="toggle-switch"><input type="checkbox" id="liveLocToggle" checked><span class="toggle-knob"></span></label>
+        </div>
+        <button class="save-btn" style="margin-top:20px" id="savePrivacyBtn">Save Privacy Settings</button>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- MOBILE BOTTOM NAV (4 tabs) -->
+  <nav class="mobile-bottom-nav" id="mobileBottomNav">
+    <button class="mnav-btn active" data-nav="chats">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" fill="currentColor"/></svg>
+      <span>Chats</span>
+      <span class="mnav-badge" id="mnavChatBadge" style="display:none">0</span>
+    </button>
+    <button class="mnav-btn" data-nav="status">
+      <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
+      <span>Status</span>
+    </button>
+    <button class="mnav-btn" data-nav="calls">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" fill="currentColor"/></svg>
+      <span>Calls</span>
+      <span class="mnav-badge" id="mnavCallBadge" style="display:none">0</span>
+    </button>
+    <button class="mnav-btn" data-nav="settings">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" fill="currentColor"/></svg>
+      <span>Settings</span>
+    </button>
+  </nav>
+
+</div><!-- /app-container -->
+
+<!-- ══ MODALS ══════════════════════════════════════════════════════════════ -->
+
+<!-- New Group Modal -->
+<div class="modal-overlay" id="newGroupModal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header"><h3>New Group</h3><button class="modal-close" id="closeGroupModal">✕</button></div>
+    <input type="text" id="groupNameInput" placeholder="Group name..." class="modal-input">
+    <p class="modal-label">Select members:</p>
+    <div class="modal-user-list" id="groupMembersList"></div>
+    <button class="modal-create-btn" id="createGroupBtn">Create Group</button>
+  </div>
+</div>
+
+<!-- Add to Call Modal -->
+<div class="modal-overlay" id="addToCallModal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header"><h3>Add to Call</h3><button class="modal-close" id="closeAddToCallModal">✕</button></div>
+    <div class="modal-user-list" id="addToCallList"></div>
+  </div>
+</div>
+
+<!-- New Chat Modal -->
+<div class="modal-overlay" id="newChatModal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header"><h3>New Chat</h3><button class="modal-close" id="closeNewChatModal">✕</button></div>
+    <div class="search-by-email-wrap">
+      <input type="email" id="newChatEmailInput" placeholder="Search by email address..." class="modal-input" autocomplete="off">
+      <button class="modal-search-btn" id="newChatSearchBtn">Search</button>
+    </div>
+    <div class="user-search-result" id="userSearchResult"></div>
+    <div class="modal-label" style="margin-top:14px">Your Contacts</div>
+    <div class="modal-user-list" id="contactsListModal"></div>
+  </div>
+</div>
+
+<!-- Live Location Modal (Google Maps) -->
+<div class="modal-overlay" id="liveLocationModal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header"><h3>Share Location</h3><button class="modal-close" id="closeLiveLocModal">✕</button></div>
+    <div class="location-map-container" id="locationMapContainer">
+      <div class="loc-loading-msg" id="locLoadingMsg">
+        <svg viewBox="0 0 24 24" width="32" height="32"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="currentColor" opacity=".3"/></svg>
+        Fetching your location...
+      </div>
+    </div>
+    <div class="loc-info-bar" id="locInfoBar" style="display:none">
+      <div class="loc-info-item"><span>Speed</span><strong id="locSpeed">0 km/h</strong></div>
+      <div class="loc-info-item"><span>Heading</span><strong id="locHeading">0°</strong></div>
+      <div class="loc-info-item"><span>Accuracy</span><strong id="locAccuracy">--</strong></div>
+    </div>
+    <div class="loc-options">
+      <button class="loc-opt-btn active" data-duration="0">Current</button>
+      <button class="loc-opt-btn" data-duration="15">Live 15m</button>
+      <button class="loc-opt-btn" data-duration="60">Live 1h</button>
+      <button class="loc-opt-btn" data-duration="480">Live 8h</button>
+    </div>
+    <button class="modal-create-btn" id="sendLiveLocBtn">Share Location</button>
+  </div>
+</div>
+
+<!-- Context Menu -->
+<div class="context-menu" id="contextMenu" style="display:none">
+  <button class="ctx-item" id="ctxEdit">✏️  Edit</button>
+  <button class="ctx-item" id="ctxDeleteMe">🗑  Delete for Me</button>
+  <button class="ctx-item danger" id="ctxDeleteAll">🗑  Delete for Everyone</button>
+</div>
+
+<!-- ══ STATUS VIEWER (fullscreen) ══ -->
+<div class="status-viewer-overlay" id="statusViewerModal" style="display:none">
+  <div class="sv-progress-bar" id="svProgressBar"></div>
+  <div class="sv-header">
+    <div class="sv-user-info">
+      <div class="sv-avatar" id="svAvatar">A</div>
+      <div>
+        <div class="sv-name" id="svName"></div>
+        <div class="sv-time" id="svTime"></div>
+      </div>
+    </div>
+    <button class="sv-close-btn" id="svCloseBtn">✕</button>
+  </div>
+  <div class="sv-content" id="svContent"></div>
+  <div class="sv-footer">
+    <div class="sv-views" id="svViews">
+      <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" fill="currentColor"/></svg>
+      <span id="svViewCount">0</span>
+    </div>
+    <div class="sv-reactions" id="svReactions" style="display:none">
+      <button class="sv-react-btn" id="svReactBtn">❤️</button>
+      <div class="sv-emoji-picker" id="svEmojiPicker" style="display:none">
+        <span data-emoji="❤️">❤️</span><span data-emoji="😂">😂</span>
+        <span data-emoji="😮">😮</span><span data-emoji="😢">😢</span>
+        <span data-emoji="🙏">🙏</span><span data-emoji="👏">👏</span>
+      </div>
+    </div>
+  </div>
+  <!-- Tap areas for navigation -->
+  <div class="sv-tap-prev" id="svTapPrev"></div>
+  <div class="sv-tap-next" id="svTapNext"></div>
+</div>
+
+<!-- ══ CREATE STATUS MODAL ══ -->
+<div class="modal-overlay" id="createStatusModal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header"><h3>Add Status</h3><button class="modal-close" id="closeCreateStatus">✕</button></div>
+    <div class="status-type-tabs">
+      <button class="stt-btn active" data-type="text">📝 Text</button>
+      <button class="stt-btn" data-type="image">🖼 Photo</button>
+    </div>
+    <!-- Text status -->
+    <div id="statusTextSection">
+      <div class="status-text-preview" id="statusTextPreview">
+        <textarea id="statusTextInput" placeholder="What's on your mind?" maxlength="700"></textarea>
+      </div>
+      <div class="status-bg-options">
+        <div class="sbg-opt active" data-bg="#0d3d35" style="background:#0d3d35"></div>
+        <div class="sbg-opt" data-bg="#1a0d3d" style="background:#1a0d3d"></div>
+        <div class="sbg-opt" data-bg="#3d1a0d" style="background:#3d1a0d"></div>
+        <div class="sbg-opt" data-bg="#0d1a3d" style="background:#0d1a3d"></div>
+        <div class="sbg-opt" data-bg="#1f1f1f" style="background:#1f1f1f"></div>
+        <div class="sbg-opt" data-bg="#3d0d1a" style="background:#3d0d1a"></div>
+      </div>
+    </div>
+    <!-- Photo status -->
+    <div id="statusPhotoSection" style="display:none">
+      <div class="status-photo-upload" id="statusPhotoUpload">
+        <input type="file" id="statusPhotoInput" accept="image/*" style="display:none">
+        <div class="spu-placeholder" id="spuPlaceholder">
+          <svg viewBox="0 0 24 24" width="40" height="40"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z" fill="currentColor"/></svg>
+          <span>Tap to add photo</span>
+        </div>
+        <img id="statusPhotoPreview" style="display:none;max-width:100%;max-height:200px;border-radius:8px;object-fit:contain">
+      </div>
+      <div class="settings-form-group" style="margin-top:10px">
+        <label>Caption (optional)</label>
+        <input type="text" id="statusCaptionInput" placeholder="Add caption..." maxlength="200">
+      </div>
+    </div>
+    <button class="modal-create-btn" id="postStatusBtn" style="margin-top:14px">Post Status</button>
+  </div>
+</div>
+
+<!-- ══ STATUS VIEWERS LIST MODAL ══ -->
+<div class="modal-overlay" id="statusViewersModal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header"><h3>Views</h3><button class="modal-close" id="closeViewersModal">✕</button></div>
+    <div id="statusViewersList"></div>
+  </div>
+</div>
+
+<!-- Google Maps API -->
+<script>
+  function initGoogleMaps() {
+    window.googleMapsReady = true;
+    window.dispatchEvent(new Event('google-maps-ready'));
+  }
+</script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBgRXfXiK8KHfSnKtunSIpGpKNmLNGNUzM&callback=initGoogleMaps" async defer></script>
+
+<script src="/js/socket.io.js" defer></script>
+<script src="/js/main.js" defer></script>
+</body>
+</html>
