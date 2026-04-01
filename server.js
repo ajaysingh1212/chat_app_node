@@ -1,10 +1,8 @@
 // ════════════════════════════════════════════════════════════════════════════
-//  ChatApp Server  —  server.js  v2.1  (BUG-FIXED)
-//  FIXES:
-//    1. Call: please-connect is sole offer trigger (no double-offer race)
-//    2. Online status: broadcast current online list to new connections
-//    3. Status: only explicit contacts (not auto-ensured) shown
-//    4. Misc: graceful error handling improvements
+//  ChatApp Server  —  server.js  v3.0
+//  NEW: voice/video notes, message reactions, reply-to, forward, image editor
+//  FIXED: chat export, lock PIN toggle, live location session_id, map persist,
+//         msg_type enum extended, two_step_hash, clear/export username keys
 // ════════════════════════════════════════════════════════════════════════════
 import express          from 'express';
 import { createServer } from 'http';
@@ -40,7 +38,7 @@ const io     = new Server(server, {
   cors: { origin: '*' }
 });
 
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '4mb' }));
 app.use(express.static(join(__dirname, 'public')));
 
 // ── MySQL Pool ─────────────────────────────────────────────────────────────
@@ -53,6 +51,33 @@ const pool = mysql.createPool({
   connectionLimit:  15,
   charset:          'utf8mb4'
 });
+
+// ── DB Init — add missing columns/tables safely ────────────────────────────
+async function initDb() {
+  const q = async (sql) => { try { await pool.query(sql); } catch(e) { /* skip if already exists */ } };
+  // Extend msg_type enum with new types
+  await q(`ALTER TABLE messages MODIFY COLUMN msg_type ENUM('text','image','file','audio','video','call','location','contact','voice_note','video_note') DEFAULT 'text'`);
+  // Add reply_to column
+  await q(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_id VARCHAR(40) DEFAULT NULL`);
+  // Add session_id to live_locations
+  await q(`ALTER TABLE live_locations ADD COLUMN IF NOT EXISTS session_id VARCHAR(40) DEFAULT NULL`);
+  await q(`ALTER TABLE live_locations ADD UNIQUE KEY uq_live_session (session_id)`);
+  // Add two_step_hash to users
+  await q(`ALTER TABLE users ADD COLUMN IF NOT EXISTS two_step_hash VARCHAR(255) DEFAULT NULL`);
+  // Create message_reactions table
+  await q(`CREATE TABLE IF NOT EXISTS message_reactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    message_id VARCHAR(40) NOT NULL,
+    user_id INT NOT NULL,
+    emoji VARCHAR(20) NOT NULL DEFAULT '❤️',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_mr (message_id, user_id),
+    FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci`);
+  console.log('✅ DB schema verified');
+}
+initDb().catch(e => console.error('DB init error:', e.message));
 
 // ── Crypto ─────────────────────────────────────────────────────────────────
 function encrypt(text) {
@@ -85,23 +110,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
   storage,
-  limits: { fileSize: 4 * 1024 * 1024 * 1024 }, // 4GB
+  limits: { fileSize: 4 * 1024 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = [
-      'image/',       // all images
-      'video/',       // all videos
-      'audio/',       // all audio
-      'application/', // pdf, zip, docs, etc.
-      'text/'         // text files
-    ];
-
-    const isAllowed = allowed.some(type =>
-      file.mimetype.startsWith(type)
-    );
-
-    cb(null, isAllowed);
+    const allowed = ['image/','video/','audio/','application/','text/'];
+    cb(null, allowed.some(t => file.mimetype.startsWith(t)));
   }
 });
+
 // ── JWT Middleware ─────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
@@ -124,9 +139,31 @@ function applyPrivacy(u, viewerId, isContact) {
   if (u.priv_photo === 'contacts' && isContact) return url;
   return null;
 }
-
-// ── Chat key helper ─────────────────────────────────────────────────────────
 function buildChatKey(type, id) { return type === 'private' ? `p:${id}` : `g:${id}`; }
+
+// ── Helper: resolve chat key to numeric user ID ────────────────────────────
+async function resolvePrivateChatTarget(key) {
+  const raw = key.slice(2);
+  const asInt = parseInt(raw);
+  if (!isNaN(asInt) && asInt.toString() === raw) return asInt;
+  // It's a username — look up ID
+  const [rows] = await pool.query('SELECT id FROM users WHERE username=?', [raw]);
+  return rows[0]?.id || null;
+}
+
+// ── Helper: decrypt reply_to object ──────────────────────────────────────
+function processReplyTo(rt) {
+  if (!rt) return null;
+  const obj = typeof rt === 'string' ? JSON.parse(rt) : rt;
+  if (obj && obj.content && obj.content_iv) {
+    obj.content = decrypt(obj.content, obj.content_iv);
+  }
+  return obj;
+}
+function processReactions(raw) {
+  if (!raw) return [];
+  return typeof raw === 'string' ? JSON.parse(raw) : raw;
+}
 
 // ══════════════════════════════════════════════
 //  AUTH
@@ -208,22 +245,16 @@ app.get('/api/users/:userId/profile', requireAuth, async (req, res) => {
 app.get('/api/users', requireAuth, async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, username, email, avatar_color, avatar_url, profile_pic,
-              is_online, last_seen
-       FROM users WHERE id != ?
-       ORDER BY username ASC`,
-      [req.user.id]
+      `SELECT id,username,email,avatar_color,avatar_url,profile_pic,is_online,last_seen
+       FROM users WHERE id!=? ORDER BY username ASC`, [req.user.id]
     );
     res.json(rows);
-  } catch (e) {
-    console.error('GET /api/users:', e);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (e) { res.status(500).json({ error: 'Server error' }); }
 });
 
 app.get('/api/users/:userId/common-groups', requireAuth, async (req, res) => {
   const [rows] = await pool.query(
-    `SELECT g.id, g.name, g.group_pic,
+    `SELECT g.id,g.name,g.group_pic,
             (SELECT COUNT(*) FROM group_members gm3 WHERE gm3.group_id=g.id) AS member_count
      FROM chat_groups g
      JOIN group_members gm1 ON gm1.group_id=g.id AND gm1.user_id=?
@@ -237,7 +268,7 @@ app.get('/api/chat-media/:targetId', requireAuth, async (req, res) => {
   const me  = req.user.id;
   const you = parseInt(req.params.targetId);
   const [rows] = await pool.query(
-    `SELECT id, file_path, file_type, file_name, file_size, created_at
+    `SELECT id,file_path,file_type,file_name,file_size,created_at
      FROM messages
      WHERE msg_type IN ('image','video','file')
        AND deleted_both=0
@@ -260,9 +291,7 @@ app.get('/api/contacts', requireAuth, async (req, res) => {
            u.priv_photo,u.is_online,u.last_seen
     FROM contacts c JOIN users u ON u.id=c.contact_id
     WHERE c.user_id=? ORDER BY u.username`, [req.user.id]);
-  rows.forEach(u => {
-    u.avatarUrl = applyPrivacy(u, req.user.id, contactIds.includes(u.id));
-  });
+  rows.forEach(u => { u.avatarUrl = applyPrivacy(u, req.user.id, contactIds.includes(u.id)); });
   res.json(rows);
 });
 
@@ -328,7 +357,7 @@ app.put('/api/two-step', requireAuth, async (req, res) => {
   const { pin } = req.body;
   if (!pin || !/^\d{6}$/.test(pin)) return res.status(400).json({ error: 'PIN must be 6 digits' });
   const hash = await bcrypt.hash(pin, 10);
-  await pool.query('UPDATE users SET two_step_hash=? WHERE id=?', [hash, req.user.id]);
+  await pool.query('UPDATE users SET two_step_hash=?,two_step_pin=? WHERE id=?', [hash, hash, req.user.id]);
   res.json({ ok: true });
 });
 
@@ -357,53 +386,176 @@ app.get('/api/groups', requireAuth, async (req, res) => {
 //  MESSAGES
 // ══════════════════════════════════════════════
 
+// ══════════════════════════════════════════════
+//  MESSAGES (FIXED — NO JSON_ARRAYAGG)
+// ══════════════════════════════════════════════
+
+// Increase GROUP_CONCAT limit (important!)
+await pool.query("SET SESSION group_concat_max_len = 1000000");
+
 app.get('/api/messages/private/:targetId', requireAuth, async (req, res) => {
   const me  = req.user.id;
   const you = parseInt(req.params.targetId);
-  const [rows] = await pool.query(`
-    SELECT m.id,m.sender_id,m.receiver_id,m.content,m.content_iv,
-           m.msg_type,m.file_path,m.file_name,m.file_size,m.file_type,
-           m.is_edited,m.deleted_both,m.created_at,m.disappears_at,
-           u.username AS sender_name,u.avatar_color,
-           ms.status AS msg_status
-    FROM messages m
-    JOIN users u ON u.id=m.sender_id
-    LEFT JOIN message_status ms ON ms.message_id=m.id AND ms.user_id=?
-    WHERE m.group_id IS NULL AND m.deleted_both=0
-      AND ((m.sender_id=? AND m.receiver_id=?) OR (m.sender_id=? AND m.receiver_id=?))
-      AND NOT JSON_CONTAINS(COALESCE(m.deleted_for,'[]'), JSON_ARRAY(?))
-      AND (m.disappears_at IS NULL OR m.disappears_at > NOW())
-    ORDER BY m.created_at ASC LIMIT 200`,
-    [me, me, you, you, me, JSON.stringify(me)]);
-  res.json(rows.map(r => ({ ...r, content: r.content ? decrypt(r.content, r.content_iv) : null })));
+
+  try {
+    const [rows] = await pool.query(`
+      SELECT m.id,m.sender_id,m.receiver_id,m.content,m.content_iv,
+             m.msg_type,m.file_path,m.file_name,m.file_size,m.file_type,
+             m.is_edited,m.deleted_both,m.created_at,m.disappears_at,m.reply_to_id,
+             u.username AS sender_name,u.avatar_color,
+             ms.status AS msg_status,
+
+             -- ✅ FIXED reactions (NO JSON_ARRAYAGG)
+             COALESCE((
+               SELECT CONCAT('[', GROUP_CONCAT(
+                 JSON_OBJECT('emoji',mr.emoji,'userId',mr.user_id,'username',ru.username)
+               ), ']')
+               FROM message_reactions mr 
+               JOIN users ru ON ru.id=mr.user_id
+               WHERE mr.message_id=m.id
+             ), '[]') AS reactions,
+
+             -- reply_to (kept same, works fine)
+             (SELECT JSON_OBJECT(
+                'id',rm.id,
+                'content',rm.content,
+                'content_iv',rm.content_iv,
+                'sender_name',rmu.username,
+                'msg_type',rm.msg_type,
+                'file_name',rm.file_name,
+                'file_path',rm.file_path
+              )
+              FROM messages rm 
+              JOIN users rmu ON rmu.id=rm.sender_id 
+              WHERE rm.id=m.reply_to_id
+             ) AS reply_to
+
+      FROM messages m
+      JOIN users u ON u.id=m.sender_id
+      LEFT JOIN message_status ms ON ms.message_id=m.id AND ms.user_id=?
+
+      WHERE m.group_id IS NULL 
+        AND m.deleted_both=0
+        AND ((m.sender_id=? AND m.receiver_id=?) OR (m.sender_id=? AND m.receiver_id=?))
+        AND NOT JSON_CONTAINS(COALESCE(m.deleted_for,'[]'), JSON_ARRAY(?))
+        AND (m.disappears_at IS NULL OR m.disappears_at > NOW())
+
+      ORDER BY m.created_at ASC 
+      LIMIT 200
+    `, [me, me, you, you, me, JSON.stringify(me)]);
+
+    res.json(rows.map(r => ({
+      ...r,
+      content: r.content ? decrypt(r.content, r.content_iv) : null,
+      reactions: processReactions(r.reactions),
+      reply_to: processReplyTo(r.reply_to)
+    })));
+
+  } catch (err) {
+    console.error("PRIVATE MSG ERROR:", err);
+    res.status(500).json({ error: "Failed to fetch messages" });
+  }
 });
+
 
 app.get('/api/messages/group/:groupId', requireAuth, async (req, res) => {
   const me  = req.user.id;
   const gid = req.params.groupId;
-  const [mem] = await pool.query('SELECT id FROM group_members WHERE group_id=? AND user_id=?', [gid, me]);
-  if (!mem.length) return res.status(403).json({ error: 'Not a member' });
-  const [rows] = await pool.query(`
-    SELECT m.id,m.sender_id,m.group_id,m.content,m.content_iv,
-           m.msg_type,m.file_path,m.file_name,m.file_size,m.file_type,
-           m.is_edited,m.created_at,m.disappears_at,
-           u.username AS sender_name,u.avatar_color
-    FROM messages m JOIN users u ON u.id=m.sender_id
-    WHERE m.group_id=? AND m.deleted_both=0
-      AND NOT JSON_CONTAINS(COALESCE(m.deleted_for,'[]'), JSON_ARRAY(?))
-      AND (m.disappears_at IS NULL OR m.disappears_at > NOW())
-    ORDER BY m.created_at ASC LIMIT 200`,
-    [gid, JSON.stringify(me)]);
-  res.json(rows.map(r => ({ ...r, content: r.content ? decrypt(r.content, r.content_iv) : null })));
+
+  try {
+    const [mem] = await pool.query(
+      'SELECT id FROM group_members WHERE group_id=? AND user_id=?',
+      [gid, me]
+    );
+
+    if (!mem.length) 
+      return res.status(403).json({ error: 'Not a member' });
+
+    const [rows] = await pool.query(`
+      SELECT m.id,m.sender_id,m.group_id,m.content,m.content_iv,
+             m.msg_type,m.file_path,m.file_name,m.file_size,m.file_type,
+             m.is_edited,m.created_at,m.disappears_at,m.reply_to_id,
+             u.username AS sender_name,u.avatar_color,
+
+             -- ✅ FIXED reactions
+             COALESCE((
+               SELECT CONCAT('[', GROUP_CONCAT(
+                 JSON_OBJECT('emoji',mr.emoji,'userId',mr.user_id,'username',ru.username)
+               ), ']')
+               FROM message_reactions mr 
+               JOIN users ru ON ru.id=mr.user_id
+               WHERE mr.message_id=m.id
+             ), '[]') AS reactions,
+
+             -- reply_to
+             (SELECT JSON_OBJECT(
+                'id',rm.id,
+                'content',rm.content,
+                'content_iv',rm.content_iv,
+                'sender_name',rmu.username,
+                'msg_type',rm.msg_type,
+                'file_name',rm.file_name,
+                'file_path',rm.file_path
+              )
+              FROM messages rm 
+              JOIN users rmu ON rmu.id=rm.sender_id 
+              WHERE rm.id=m.reply_to_id
+             ) AS reply_to
+
+      FROM messages m 
+      JOIN users u ON u.id=m.sender_id
+
+      WHERE m.group_id=? 
+        AND m.deleted_both=0
+        AND NOT JSON_CONTAINS(COALESCE(m.deleted_for,'[]'), JSON_ARRAY(?))
+        AND (m.disappears_at IS NULL OR m.disappears_at > NOW())
+
+      ORDER BY m.created_at ASC 
+      LIMIT 200
+    `, [gid, JSON.stringify(me)]);
+
+    res.json(rows.map(r => ({
+      ...r,
+      content: r.content ? decrypt(r.content, r.content_iv) : null,
+      reactions: processReactions(r.reactions),
+      reply_to: processReplyTo(r.reply_to)
+    })));
+
+  } catch (err) {
+    console.error("GROUP MSG ERROR:", err);
+    res.status(500).json({ error: "Failed to fetch group messages" });
+  }
 });
 
-// ── Clear Chat ────────────────────────────────
+// ── Message Reactions API ──────────────────────────────────────────────────
+app.post('/api/messages/:msgId/react', requireAuth, async (req, res) => {
+  const { emoji } = req.body;
+  try {
+    if (emoji) {
+      await pool.query(
+        'INSERT INTO message_reactions (message_id,user_id,emoji) VALUES (?,?,?) ON DUPLICATE KEY UPDATE emoji=?',
+        [req.params.msgId, req.user.id, emoji, emoji]
+      );
+    } else {
+      await pool.query('DELETE FROM message_reactions WHERE message_id=? AND user_id=?',
+        [req.params.msgId, req.user.id]);
+    }
+    const [reactions] = await pool.query(
+      'SELECT mr.emoji,u.id AS userId,u.username FROM message_reactions mr JOIN users u ON u.id=mr.user_id WHERE mr.message_id=?',
+      [req.params.msgId]
+    );
+    res.json({ ok: true, reactions });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Clear Chat ────────────────────────────────────────────────────────────
 app.delete('/api/chat/clear/:chatKey', requireAuth, async (req, res) => {
   const me  = req.user.id;
-  const key = req.params.chatKey;
+  const key = decodeURIComponent(req.params.chatKey);
   try {
     if (key.startsWith('p:')) {
-      const otherId = parseInt(key.slice(2));
+      const otherId = await resolvePrivateChatTarget(key);
+      if (!otherId) return res.status(404).json({ error: 'User not found' });
       await pool.query(
         `UPDATE messages SET deleted_for=JSON_ARRAY_APPEND(COALESCE(deleted_for,'[]'),'$',?)
          WHERE ((sender_id=? AND receiver_id=?) OR (sender_id=? AND receiver_id=?))
@@ -421,14 +573,15 @@ app.delete('/api/chat/clear/:chatKey', requireAuth, async (req, res) => {
   } catch(e) { res.status(500).json({ error: 'Clear failed' }); }
 });
 
-// ── Export Chat ───────────────────────────────
+// ── Export Chat (FIXED — resolves username keys) ───────────────────────────
 app.get('/api/chat/export/:chatKey', requireAuth, async (req, res) => {
   const me  = req.user.id;
-  const key = req.params.chatKey;
+  const key = decodeURIComponent(req.params.chatKey);
   try {
     let rows = [];
     if (key.startsWith('p:')) {
-      const otherId = parseInt(key.slice(2));
+      const otherId = await resolvePrivateChatTarget(key);
+      if (!otherId) return res.status(404).json({ error: 'User not found' });
       const [r] = await pool.query(
         `SELECT m.*,u.username AS sender_name FROM messages m
          JOIN users u ON u.id=m.sender_id
@@ -453,7 +606,47 @@ app.get('/api/chat/export/:chatKey', requireAuth, async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="chat_export_${Date.now()}.txt"`);
     res.send(lines.join('\n'));
-  } catch(e) { res.status(500).json({ error: 'Export failed' }); }
+  } catch(e) { res.status(500).json({ error: 'Export failed: ' + e.message }); }
+});
+
+// ── Live Location GET (for reading other users' live locations) ────────────
+app.get('/api/live-location/:sessionId', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ll.*, u.username, u.avatar_color, u.profile_pic
+       FROM live_locations ll JOIN users u ON u.id=ll.user_id
+       WHERE ll.session_id=? AND ll.expires_at > NOW()`,
+      [req.params.sessionId]
+    );
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Get all live locations for a chat ─────────────────────────────────────
+app.get('/api/live-location/chat/:chatKey', requireAuth, async (req, res) => {
+  const me  = req.user.id;
+  const key = decodeURIComponent(req.params.chatKey);
+  try {
+    let rows;
+    if (key.startsWith('g:')) {
+      const groupId = key.slice(2);
+      [rows] = await pool.query(
+        `SELECT ll.*, u.username, u.avatar_color FROM live_locations ll
+         JOIN users u ON u.id=ll.user_id WHERE ll.group_id=? AND ll.expires_at > NOW()`,
+        [groupId]
+      );
+    } else {
+      const otherId = await resolvePrivateChatTarget(key);
+      [rows] = await pool.query(
+        `SELECT ll.*, u.username, u.avatar_color FROM live_locations ll
+         JOIN users u ON u.id=ll.user_id
+         WHERE ll.expires_at > NOW()
+           AND ((ll.user_id=? AND ll.chat_user_id=?) OR (ll.user_id=? AND ll.chat_user_id=?))`,
+        [me, otherId, otherId, me]
+      );
+    }
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ══════════════════════════════════════════════
@@ -500,8 +693,8 @@ app.post('/api/upload', requireAuth, upload.single('file'), async (req, res) => 
       } catch {}
     }
     const fileUrl = `/uploads/${finalName}`;
-    const [rows]  = await pool.query('SELECT profile_pic FROM users WHERE id=?', [req.user.id]);
-    const oldPic  = rows[0]?.profile_pic;
+    const [rows] = await pool.query('SELECT profile_pic FROM users WHERE id=?', [req.user.id]);
+    const oldPic = rows[0]?.profile_pic;
     if (oldPic) { const op = join(__dirname, 'public', oldPic); if (fs.existsSync(op)) try { fs.unlinkSync(op); } catch {} }
     await pool.query('UPDATE users SET profile_pic=? WHERE id=?', [fileUrl, req.user.id]);
     res.json({ url: fileUrl, name: file.originalname, size: finalSize, type: file.mimetype });
@@ -513,7 +706,7 @@ app.post('/api/upload/media', requireAuth, upload.single('file'), async (req, re
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
     let finalName = file.filename, finalSize = file.size;
-    if (file.mimetype.startsWith('image/') && !file.mimetype.includes('gif')) {
+    if (file.mimetype.startsWith('image/') && !file.mimetype.includes('gif') && !req.query.raw) {
       const outName = `c-${file.filename.replace(/\.[^.]+$/, '.jpg')}`;
       const outPath = join(uploadDir, outName);
       try {
@@ -533,7 +726,6 @@ app.post('/api/upload/media', requireAuth, upload.single('file'), async (req, re
 //  STATUS  (WhatsApp-like 24h)
 // ══════════════════════════════════════════════
 
-// FIX: Status only shows explicit contacts (contacts table entries)
 app.get('/api/status', requireAuth, async (req, res) => {
   const me = req.user.id;
   try {
@@ -548,15 +740,9 @@ app.get('/api/status', requireAuth, async (req, res) => {
       FROM status_posts sp
       JOIN users u ON u.id=sp.user_id
       WHERE sp.expires_at > NOW()
-        AND (
-          sp.user_id = ?
-          OR sp.user_id IN (
-            SELECT contact_id FROM contacts WHERE user_id = ?
-          )
-        )
+        AND (sp.user_id=? OR sp.user_id IN (SELECT contact_id FROM contacts WHERE user_id=?))
       ORDER BY sp.user_id=? DESC, sp.created_at DESC`,
       [me, me, me, me, me]);
-
     const userMap = {};
     posts.forEach(p => {
       if (!userMap[p.user_id]) {
@@ -592,10 +778,7 @@ app.delete('/api/status/:id', requireAuth, async (req, res) => {
 });
 
 app.post('/api/status/:id/view', requireAuth, async (req, res) => {
-  await pool.query(
-    'INSERT IGNORE INTO status_views (status_id,viewer_id) VALUES (?,?)',
-    [req.params.id, req.user.id]
-  );
+  await pool.query('INSERT IGNORE INTO status_views (status_id,viewer_id) VALUES (?,?)', [req.params.id, req.user.id]);
   res.json({ ok: true });
 });
 
@@ -614,14 +797,10 @@ app.post('/api/status/:id/like', requireAuth, async (req, res) => {
 
 app.get('/api/status/:id/viewers', requireAuth, async (req, res) => {
   const [rows] = await pool.query(
-    `SELECT u.id,u.username,u.avatar_color,u.profile_pic,sv.viewed_at,
-            sl.emoji AS reaction
-     FROM status_views sv
-     JOIN users u ON u.id=sv.viewer_id
+    `SELECT u.id,u.username,u.avatar_color,u.profile_pic,sv.viewed_at,sl.emoji AS reaction
+     FROM status_views sv JOIN users u ON u.id=sv.viewer_id
      LEFT JOIN status_likes sl ON sl.status_id=sv.status_id AND sl.user_id=sv.viewer_id
-     WHERE sv.status_id=? AND EXISTS(
-       SELECT 1 FROM status_posts sp WHERE sp.id=? AND sp.user_id=?
-     )
+     WHERE sv.status_id=? AND EXISTS(SELECT 1 FROM status_posts sp WHERE sp.id=? AND sp.user_id=?)
      ORDER BY sv.viewed_at DESC`,
     [req.params.id, req.params.id, req.user.id]
   );
@@ -635,24 +814,17 @@ app.get('/api/status/:id/viewers', requireAuth, async (req, res) => {
 app.get('/api/blocked', requireAuth, async (req, res) => {
   const [rows] = await pool.query(
     `SELECT u.id,u.username,u.email,u.avatar_color,u.profile_pic
-     FROM blocked_users bu JOIN users u ON u.id=bu.blocked_id
-     WHERE bu.user_id=?`, [req.user.id]);
+     FROM blocked_users bu JOIN users u ON u.id=bu.blocked_id WHERE bu.user_id=?`, [req.user.id]);
   res.json(rows);
 });
 
 app.post('/api/block/:userId', requireAuth, async (req, res) => {
-  await pool.query(
-    'INSERT IGNORE INTO blocked_users (user_id,blocked_id) VALUES (?,?)',
-    [req.user.id, req.params.userId]
-  );
+  await pool.query('INSERT IGNORE INTO blocked_users (user_id,blocked_id) VALUES (?,?)', [req.user.id, req.params.userId]);
   res.json({ ok: true });
 });
 
 app.delete('/api/block/:userId', requireAuth, async (req, res) => {
-  await pool.query(
-    'DELETE FROM blocked_users WHERE user_id=? AND blocked_id=?',
-    [req.user.id, req.params.userId]
-  );
+  await pool.query('DELETE FROM blocked_users WHERE user_id=? AND blocked_id=?', [req.user.id, req.params.userId]);
   res.json({ ok: true });
 });
 
@@ -685,9 +857,10 @@ app.put('/api/chat-settings/:chatKey', requireAuth, async (req, res) => {
        disappearing_msgs=VALUES(disappearing_msgs),
        theme=VALUES(theme),
        is_locked=VALUES(is_locked),
-       lock_pin_hash=COALESCE(VALUES(lock_pin_hash),lock_pin_hash),
+       lock_pin_hash=IF(VALUES(lock_pin_hash) IS NOT NULL, VALUES(lock_pin_hash), lock_pin_hash),
        is_muted=VALUES(is_muted)`,
-    [req.user.id, req.params.chatKey, disappearingMsgs||'off', theme||'default',
+    [req.user.id, req.params.chatKey,
+     disappearingMsgs||'off', theme||'default',
      isLocked?1:0, lockHash, isMuted?1:0]
   );
   res.json({ ok: true });
@@ -699,23 +872,23 @@ app.post('/api/chat-settings/:chatKey/verify-pin', requireAuth, async (req, res)
     'SELECT lock_pin_hash FROM chat_settings WHERE user_id=? AND chat_key=? AND is_locked=1',
     [req.user.id, req.params.chatKey]
   );
-  if (!rows.length) return res.json({ valid: true });
+  if (!rows.length) return res.json({ valid: true }); // Not locked
+  if (!rows[0].lock_pin_hash) return res.json({ valid: true });
   const valid = await bcrypt.compare(pin, rows[0].lock_pin_hash);
   res.json({ valid });
 });
 
 // ── Home ──────────────────────────────────────
-app.get('/', (req, res) =>
+app.get('/', (req, res) => 
   res.sendFile(join(__dirname, 'app', 'index.html'))
 );
 
 // ══════════════════════════════════════════════
 //  SOCKET.IO
 // ══════════════════════════════════════════════
-const onlineUsers  = {};   // userId(int) → socketId
-const socketToUser = {};   // socketId   → { id, username }
+const onlineUsers  = {};
+const socketToUser = {};
 const callRooms    = {};
-const liveLocSessions = {};
 
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
@@ -732,8 +905,7 @@ io.on('connection', async (socket) => {
   await pool.query('UPDATE users SET is_online=1,last_seen=NULL WHERE id=?', [myId]);
   socket.broadcast.emit('user-status', { userId: myId, username, isOnline: true });
 
-  // ── FIX: Send list of currently online user IDs to newly connected socket ──
-  // This fixes the stale online-status on first load
+  // Send current online list to newly connected socket
   const currentOnlineIds = Object.keys(onlineUsers).map(id => parseInt(id));
   socket.emit('online-users', currentOnlineIds);
 
@@ -751,14 +923,20 @@ io.on('connection', async (socket) => {
     const [members] = await pool.query('SELECT user_id FROM group_members WHERE group_id=?', [groupId]);
     members.forEach(m => { if (excludeMe && m.user_id === myId) return; emitTo(m.user_id, event, data); });
   }
-  // NOTE: ensureContact only used for explicit messaging, NOT for status
   async function ensureContact(a, b) {
     await pool.query('INSERT IGNORE INTO contacts (user_id,contact_id) VALUES (?,?)', [a, b]);
     await pool.query('INSERT IGNORE INTO contacts (user_id,contact_id) VALUES (?,?)', [b, a]);
   }
+  async function getMessageReactions(msgId) {
+    const [rows] = await pool.query(
+      'SELECT mr.emoji,u.id AS userId,u.username FROM message_reactions mr JOIN users u ON u.id=mr.user_id WHERE mr.message_id=?',
+      [msgId]
+    );
+    return rows;
+  }
 
   // ── Private Message ──────────────────────────────────────────────────────
-  socket.on('private-message', async ({ to, content, msgType, fileUrl, fileName, fileSize, fileType, msgId }) => {
+  socket.on('private-message', async ({ to, content, msgType, fileUrl, fileName, fileSize, fileType, msgId, replyToId }) => {
     const toId = await getUserId(to);
     if (!toId) return;
     const [blocked] = await pool.query(
@@ -769,8 +947,8 @@ io.on('connection', async (socket) => {
     const id = msgId || genId();
     const { enc, iv } = content ? encrypt(content) : { enc: null, iv: null };
 
-    const [myCs]    = await pool.query('SELECT disappearing_msgs FROM chat_settings WHERE user_id=? AND chat_key=?', [myId, `p:${toId}`]);
-    const [theirCs] = await pool.query('SELECT disappearing_msgs FROM chat_settings WHERE user_id=? AND chat_key=?', [toId, `p:${myId}`]);
+    const [myCs]    = await pool.query('SELECT disappearing_msgs FROM chat_settings WHERE user_id=? AND chat_key=?', [myId, `p:${to}`]);
+    const [theirCs] = await pool.query('SELECT disappearing_msgs FROM chat_settings WHERE user_id=? AND chat_key=?', [toId, `p:${username}`]);
     const dm = myCs[0]?.disappearing_msgs || theirCs[0]?.disappearing_msgs || 'off';
     let disappearsAt = null;
     if (dm !== 'off') {
@@ -779,11 +957,11 @@ io.on('connection', async (socket) => {
     }
 
     await pool.query(
-      'INSERT INTO messages (id,sender_id,receiver_id,content,content_iv,msg_type,file_path,file_name,file_size,file_type,disappears_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-      [id, myId, toId, enc, iv, msgType||'text', fileUrl||null, fileName||null, fileSize||null, fileType||null, disappearsAt]
+      'INSERT INTO messages (id,sender_id,receiver_id,content,content_iv,msg_type,file_path,file_name,file_size,file_type,disappears_at,reply_to_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      [id, myId, toId, enc, iv, msgType||'text', fileUrl||null, fileName||null, fileSize||null, fileType||null, disappearsAt, replyToId||null]
     );
     await ensureContact(myId, toId);
-    const msg = { id, from: username, to, content: content||null, msgType: msgType||'text', fileUrl, fileName, fileSize, fileType, time: new Date().toISOString(), status: 'sent', disappearsAt };
+    const msg = { id, from: username, to, content: content||null, msgType: msgType||'text', fileUrl, fileName, fileSize, fileType, time: new Date().toISOString(), status: 'sent', disappearsAt, replyToId: replyToId||null };
     if (onlineUsers[toId]) {
       emitTo(toId, 'private-message', { ...msg, status: 'delivered' });
       await pool.query("INSERT INTO message_status (message_id,user_id,status) VALUES (?,?,'delivered') ON DUPLICATE KEY UPDATE status='delivered'", [id, toId]);
@@ -792,16 +970,16 @@ io.on('connection', async (socket) => {
   });
 
   // ── Group Message ────────────────────────────────────────────────────────
-  socket.on('group-message', async ({ groupId, content, msgType, fileUrl, fileName, fileSize, fileType, msgId }) => {
+  socket.on('group-message', async ({ groupId, content, msgType, fileUrl, fileName, fileSize, fileType, msgId, replyToId }) => {
     const [mem] = await pool.query('SELECT id FROM group_members WHERE group_id=? AND user_id=?', [groupId, myId]);
     if (!mem.length) return;
     const id = msgId || genId();
     const { enc, iv } = content ? encrypt(content) : { enc: null, iv: null };
     await pool.query(
-      'INSERT INTO messages (id,sender_id,group_id,content,content_iv,msg_type,file_path,file_name,file_size,file_type) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      [id, myId, groupId, enc, iv, msgType||'text', fileUrl||null, fileName||null, fileSize||null, fileType||null]
+      'INSERT INTO messages (id,sender_id,group_id,content,content_iv,msg_type,file_path,file_name,file_size,file_type,reply_to_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      [id, myId, groupId, enc, iv, msgType||'text', fileUrl||null, fileName||null, fileSize||null, fileType||null, replyToId||null]
     );
-    const msg = { id, from: username, groupId, content: content||null, msgType: msgType||'text', fileUrl, fileName, fileSize, fileType, time: new Date().toISOString() };
+    const msg = { id, from: username, groupId, content: content||null, msgType: msgType||'text', fileUrl, fileName, fileSize, fileType, time: new Date().toISOString(), replyToId: replyToId||null };
     await emitToGroupMembers(groupId, 'group-message', msg);
   });
 
@@ -836,6 +1014,25 @@ io.on('connection', async (socket) => {
     }
   });
 
+  // ── React to Message ──────────────────────────────────────────────────────
+  socket.on('react-message', async ({ msgId, emoji, to, groupId }) => {
+    try {
+      if (emoji) {
+        await pool.query(
+          'INSERT INTO message_reactions (message_id,user_id,emoji) VALUES (?,?,?) ON DUPLICATE KEY UPDATE emoji=?',
+          [msgId, myId, emoji, emoji]
+        );
+      } else {
+        await pool.query('DELETE FROM message_reactions WHERE message_id=? AND user_id=?', [msgId, myId]);
+      }
+      const reactions = await getMessageReactions(msgId);
+      const payload = { msgId, reactions, by: username };
+      socket.emit('message-reacted', payload);
+      if (groupId) { await emitToGroupMembers(groupId, 'message-reacted', payload, true); }
+      else if (to) { const toId = await getUserId(to); if (toId) emitTo(toId, 'message-reacted', payload); }
+    } catch(e) { console.error('react-message:', e); }
+  });
+
   // ── Seen ──────────────────────────────────────────────────────────────────
   socket.on('message-seen', async ({ msgId, fromUser }) => {
     await pool.query("INSERT INTO message_status (message_id,user_id,status,seen_at) VALUES (?,?,'seen',NOW()) ON DUPLICATE KEY UPDATE status='seen',seen_at=NOW()", [msgId, myId]);
@@ -868,16 +1065,20 @@ io.on('connection', async (socket) => {
 
   // ── Live Location ──────────────────────────────────────────────────────────
   socket.on('live-location-update', async ({ to, groupId, lat, lng, speed, heading, accuracy, sessionId }) => {
-    await pool.query(
-      `INSERT INTO live_locations (session_id,user_id,chat_user_id,group_id,latitude,longitude,speed,heading,accuracy,expires_at)
-       VALUES (?,?,?,?,?,?,?,?,?,DATE_ADD(NOW(), INTERVAL 1 HOUR))
-       ON DUPLICATE KEY UPDATE latitude=?,longitude=?,speed=?,heading=?,accuracy=?,expires_at=DATE_ADD(NOW(), INTERVAL 1 HOUR)`,
-      [sessionId, myId, to?await getUserId(to):null, groupId||null, lat,lng,speed||0,heading||0,accuracy||0,
-       lat,lng,speed||0,heading||0,accuracy||0]
-    );
+    const toIdResolved = to ? await getUserId(to) : null;
+    try {
+      await pool.query(
+        `INSERT INTO live_locations (session_id,user_id,chat_user_id,group_id,latitude,longitude,speed,heading,accuracy,expires_at)
+         VALUES (?,?,?,?,?,?,?,?,?,DATE_ADD(NOW(), INTERVAL 1 HOUR))
+         ON DUPLICATE KEY UPDATE latitude=?,longitude=?,speed=?,heading=?,accuracy=?,expires_at=DATE_ADD(NOW(), INTERVAL 1 HOUR)`,
+        [sessionId, myId, toIdResolved||null, groupId||null,
+         lat, lng, speed||0, heading||0, accuracy||0,
+         lat, lng, speed||0, heading||0, accuracy||0]
+      );
+    } catch(e) { console.error('live-loc insert:', e.message); }
     const payload = { from: username, userId: myId, lat, lng, speed: speed||0, heading: heading||0, accuracy: accuracy||0, sessionId };
     if (groupId) { await emitToGroupMembers(groupId, 'live-location-update', payload, true); }
-    else if (to) { const toId = await getUserId(to); if (toId) emitTo(toId, 'live-location-update', payload); }
+    else if (to) { if (toIdResolved) emitTo(toIdResolved, 'live-location-update', payload); }
   });
 
   socket.on('stop-live-location', async ({ to, groupId, sessionId }) => {
@@ -895,10 +1096,7 @@ io.on('connection', async (socket) => {
   });
 
   // ════════════════════════════════════════════
-  //  CALL SIGNALING  (FIXED)
-  //  Key fix: server emits BOTH 'call-accepted' AND 'please-connect' to caller.
-  //  Client now ONLY sends offer from 'please-connect' handler (not call-accepted).
-  //  This eliminates the double-offer race condition.
+  //  CALL SIGNALING
   // ════════════════════════════════════════════
   socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
     const callId = roomId || genId();
@@ -912,10 +1110,7 @@ io.on('connection', async (socket) => {
       const calleeInCall = [...Object.values(callRooms)].some(r => r.members.has(toId));
       emitTo(toId, 'call-invite', { from: username, callType, isGroup: false, roomId: callId, calleeBusy: calleeInCall });
       const histId = genId();
-      await pool.query(
-        'INSERT INTO call_history (id,caller_id,callee_id,call_type,is_group,status) VALUES (?,?,?,?,0,"missed")',
-        [histId, myId, toId, callType]
-      );
+      await pool.query('INSERT INTO call_history (id,caller_id,callee_id,call_type,is_group,status) VALUES (?,?,?,?,0,"missed")', [histId, myId, toId, callType]);
       callRooms[callId].histId = histId;
       callRooms[callId].callerId = myId;
     }
@@ -929,15 +1124,9 @@ io.on('connection', async (socket) => {
       const existing = [...room.members];
       room.members.add(myId);
       if (room.histId) await pool.query('UPDATE call_history SET status="answered",started_at=NOW() WHERE id=?', [room.histId]);
-      // Send call-accepted to caller (for UI transition)
       emitTo(toId, 'call-accepted', { from: username, callType });
-      // Send please-connect to all existing members so they initiate offer
-      // (client sends offer ONLY from please-connect, not from call-accepted)
-      for (const uid of existing) {
-        if (uid !== myId) emitTo(uid, 'please-connect', { to: username });
-      }
+      for (const uid of existing) { if (uid !== myId) emitTo(uid, 'please-connect', { to: username }); }
     } else {
-      // Fallback: no room found, still notify caller
       emitTo(toId, 'call-accepted', { from: username, callType });
       emitTo(toId, 'please-connect', { to: username });
     }
@@ -968,10 +1157,10 @@ io.on('connection', async (socket) => {
     if (toId) emitTo(toId, 'call-invite', { from: username, callType, isGroup: false, addToCall: true, roomId });
   });
 
-  socket.on('offer',        async ({ to, offer })       => { const t=await getUserId(to); if(t) emitTo(t,'offer',       {from:username,offer}); });
-  socket.on('answer',       async ({ to, answer })      => { const t=await getUserId(to); if(t) emitTo(t,'answer',      {from:username,answer}); });
-  socket.on('icecandidate', async ({ to, candidate })   => { const t=await getUserId(to); if(t) emitTo(t,'icecandidate',{from:username,candidate}); });
-  socket.on('toggle-media', async ({ to, kind, enabled })=> { const t=await getUserId(to); if(t) emitTo(t,'peer-toggle-media',{from:username,kind,enabled}); });
+  socket.on('offer',        async ({ to, offer })      => { const t=await getUserId(to); if(t) emitTo(t,'offer',       {from:username,offer}); });
+  socket.on('answer',       async ({ to, answer })     => { const t=await getUserId(to); if(t) emitTo(t,'answer',      {from:username,answer}); });
+  socket.on('icecandidate', async ({ to, candidate })  => { const t=await getUserId(to); if(t) emitTo(t,'icecandidate',{from:username,candidate}); });
+  socket.on('toggle-media', async ({ to, kind, enabled }) => { const t=await getUserId(to); if(t) emitTo(t,'peer-toggle-media',{from:username,kind,enabled}); });
 
   socket.on('disconnect', async () => {
     const lastSeen = new Date();
@@ -984,4 +1173,4 @@ io.on('connection', async (socket) => {
   });
 });
 
-server.listen(PORT, () => console.log(`🚀 ChatApp v2.1 running on http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`🚀 ChatApp v3.0 running on http://localhost:${PORT}`));
