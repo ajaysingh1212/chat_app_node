@@ -154,6 +154,31 @@
   .reply-preview-bar{flex-shrink:0}
   .recording-bar{flex-shrink:0}
 }
+/* ── Mini Call PiP with local video ─── */
+.mini-call-pip{position:fixed;bottom:90px;right:18px;z-index:900;width:160px;
+  background:#0d1a2a;border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.7);
+  cursor:move;border:1px solid #223045}
+.mini-pip-remote{width:100%;height:120px;background:#000;position:relative}
+.mini-pip-remote video{width:100%;height:100%;object-fit:cover;display:block}
+.mini-pip-local{position:absolute;bottom:6px;right:6px;width:50px;height:50px;
+  border-radius:10px;overflow:hidden;border:2px solid #00bfa5;background:#000;z-index:2}
+.mini-pip-local video{width:100%;height:100%;object-fit:cover;display:block}
+.mini-pip-local-avatar{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+  background:#1a2433;font-size:18px;color:#d8e4f0}
+.mini-pip-info{padding:6px 10px;display:flex;align-items:center;justify-content:space-between}
+.mini-pip-actions{display:flex;gap:6px;padding:0 8px 8px}
+.mini-pip-btn{flex:1;padding:6px;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer}
+.mini-pip-expand{background:#1a2e40;color:#d8e4f0}
+.mini-pip-end-btn{background:#e53e3e;color:#fff}
+/* ── Hold call overlay ─── */
+.hold-overlay{position:absolute;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;
+  justify-content:center;flex-direction:column;gap:8px;z-index:10;border-radius:inherit}
+.hold-overlay-text{color:#fff;font-size:14px;font-weight:700}
+.hold-overlay-sub{color:#aaa;font-size:12px}
+/* ── Active call local video pip ─── */
+#localVideoWrap{position:absolute;bottom:80px;right:16px;width:90px;height:120px;
+  border-radius:12px;overflow:hidden;border:2px solid #00bfa5;background:#000;z-index:5;cursor:move}
+#localVideoWrap video{width:100%;height:100%;object-fit:cover;display:block}
 `;
   document.head.appendChild(s);
 })();
@@ -261,17 +286,31 @@ let pendingIncomingCaller=null,pendingIncomingCallType='audio',pendingIncomingRo
 let activePipUser=null;
 let statusBgColor='#0d3d35',statusType='text';
 let currentStatusList=[],currentStatusUserIdx=0,currentStatusItemIdx=0,statusTimer=null;
+// FIXED: lockedChats now persists via sessionStorage
 let lockedChats={};
 let replyToMsg=null;
 let mediaRecorder=null,audioChunks=[],isRecordingVoice=false,recTimerInterval=null,recSeconds=0;
 let videoRecorder=null,videoChunks=[],isRecordingVideo=false;
-let liveLocMapInstances={};  // sessionId -> {map, myMarker, peerMarkers:{username->marker}}
-let liveLocStartTimes={};    // sessionId -> Date
-let liveLocTimerIntervals={}; // sessionId -> intervalId
+let liveLocMapInstances={};
+let liveLocStartTimes={};
+let liveLocTimerIntervals={};
 let activeReactionPicker=null;
+// FIXED: hold call state
+let heldCallPeer=null,heldCallType='audio',heldCallRoomId=null;
+let isCallOnHold=false;
 const typingUsers=new Set();
 const peerConnections={},iceCandidateQueue={},pendingOffers={};
 let liveMapInstance=null,liveMarker=null;
+
+/* ── Load lockedChats from sessionStorage (persists in tab, cleared on close) */
+try {
+  const saved = sessionStorage.getItem('unlockedChats');
+  if (saved) lockedChats = JSON.parse(saved);
+} catch {}
+
+function saveUnlockedChats() {
+  try { sessionStorage.setItem('unlockedChats', JSON.stringify(lockedChats)); } catch {}
+}
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 const genId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
@@ -366,7 +405,7 @@ registerBtn.addEventListener('click',async()=>{
 [loginPassword,loginEmail].forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')loginBtn.click();}));
 [regPassword,regEmail,regUsername].forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')registerBtn.click();}));
 settingsLogout?.addEventListener('click',doLogout);
-function doLogout(){localStorage.removeItem('chatapp_token');localStorage.removeItem('chatapp_user');location.reload();}
+function doLogout(){localStorage.removeItem('chatapp_token');localStorage.removeItem('chatapp_user');sessionStorage.removeItem('unlockedChats');location.reload();}
 
 function onAuthSuccess(token,user){
   myToken=token;
@@ -435,6 +474,38 @@ function injectInputBarExtras(){
     $('closeFwdModal').addEventListener('click',()=>{m.style.display='none';});
     m.addEventListener('click',e=>{if(e.target===m)m.style.display='none';});
   }
+  // FIXED: Make mini PiP draggable
+  makeDraggable(miniCallPip);
+}
+
+/* ── Make element draggable ─── */
+function makeDraggable(el){
+  if(!el)return;
+  let ox=0,oy=0,sx=0,sy=0;
+  el.addEventListener('mousedown',e=>{
+    if(e.target.tagName==='BUTTON')return;
+    sx=e.clientX;sy=e.clientY;
+    ox=el.offsetLeft;oy=el.offsetTop;
+    function move(ev){
+      el.style.right='auto';el.style.bottom='auto';
+      el.style.left=(ox+(ev.clientX-sx))+'px';
+      el.style.top=(oy+(ev.clientY-sy))+'px';
+    }
+    function up(){document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);}
+    document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+  });
+  // Touch drag
+  el.addEventListener('touchstart',e=>{
+    if(e.target.tagName==='BUTTON')return;
+    const t=e.touches[0];sx=t.clientX;sy=t.clientY;ox=el.offsetLeft;oy=el.offsetTop;
+  },{passive:true});
+  el.addEventListener('touchmove',e=>{
+    if(e.target.tagName==='BUTTON')return;
+    const t=e.touches[0];
+    el.style.right='auto';el.style.bottom='auto';
+    el.style.left=(ox+(t.clientX-sx))+'px';
+    el.style.top=(oy+(t.clientY-sy))+'px';
+  },{passive:true});
 }
 
 async function loadInitialData(){
@@ -456,6 +527,14 @@ function initSocket(){
     console.error('Socket error:',e.message);
     if(['auth_required','invalid_token'].includes(e.message)){localStorage.clear();location.reload();}
   });
+
+  // FIXED: On reconnect, re-join any active call room
+  socket.on('connect',()=>{
+    if(currentCallRoomId && currentCallPeers.length > 0){
+      socket.emit('rejoin-call',{roomId:currentCallRoomId,callType:currentCallType});
+    }
+  });
+
   socket.on('online-users',(onlineIds)=>{
     onlineIds.forEach(uid=>{
       for(const uname in allUsersMap){if(allUsersMap[uname].id===uid)allUsersMap[uname].is_online=1;}
@@ -472,7 +551,38 @@ function initSocket(){
       chatHeaderStatus.style.color=isOnline?'var(--accent)':'var(--ts)';
     }
     if(activePipUser===username)updatePipStatus(isOnline,lastSeen);
+
+    // FIXED: When user comes online, upgrade pending 'sent' msgs to 'delivered'
+    if(isOnline){
+      const key=chatKey('private',username);
+      if(chats[key]){
+        chats[key].messages.forEach(m=>{
+          if(m.from===myUser?.username && m.status==='sent'){
+            m.status='delivered';
+            updateMsgStatus(m.id,'delivered');
+          }
+        });
+      }
+    }
   });
+
+  // FIXED: Profile pic live update
+  socket.on('user-avatar-updated',({username,avatarUrl})=>{
+    if(allUsersMap[username])allUsersMap[username].avatarUrl=avatarUrl;
+    if(contacts[username])contacts[username].avatarUrl=avatarUrl;
+    // Update chat header if active
+    if(activeChat?.type==='private'&&activeChat.id===username){
+      const u=allUsersMap[username]||contacts[username];
+      if(u)setAvatarEl(chatHeaderAvatar,u);
+    }
+    // Update PiP if open
+    if(activePipUser===username){
+      const u=allUsersMap[username]||contacts[username];
+      if(u)setAvatarEl(pipHeroAvatar,u);
+    }
+    renderChatList();
+  });
+
   socket.on('group-created',({groupId,name,createdBy,members})=>{
     groups[groupId]={id:groupId,name,members};
     const key=chatKey('group',groupId);ensureChat(key);
@@ -482,7 +592,7 @@ function initSocket(){
   });
   socket.on('message-sent',({id,status})=>updateMsgStatus(id,status));
   socket.on('private-message',msg=>{
-    if(msg.from===myUser.username)return;
+    if(msg.from===myUser?.username)return;
     const key=chatKey('private',msg.from);ensureChat(key);
     const m=normaliseMsg(msg);
     chats[key].messages.push(m);
@@ -497,7 +607,7 @@ function initSocket(){
     renderChatList();
   });
   socket.on('group-message',msg=>{
-    if(msg.from===myUser.username)return;
+    if(msg.from===myUser?.username)return;
     const key=chatKey('group',msg.groupId);ensureChat(key);
     const m=normaliseMsg(msg);
     chats[key].messages.push(m);
@@ -531,9 +641,18 @@ function initSocket(){
     if(key&&chats[key]){const m=chats[key].messages.find(m=>m.id===msgId);if(m)m.reactions=reactions;}
   });
   socket.on('message-seen',({msgId})=>updateMsgStatus(msgId,'seen'));
+
+  // FIXED: Bulk seen update when user opens chat
+  socket.on('messages-delivered',({msgIds})=>{
+    msgIds.forEach(id=>updateMsgStatus(id,'delivered'));
+  });
+  socket.on('messages-seen',({msgIds})=>{
+    msgIds.forEach(id=>updateMsgStatus(id,'seen'));
+  });
+
   socket.on('message-blocked',({to})=>showToast(`Cannot send to ${to}`));
   socket.on('typing',({from,to,isTyping,isGroup})=>{
-    if(from===myUser.username||!activeChat)return;
+    if(from===myUser?.username||!activeChat)return;
     const relevant=isGroup?(activeChat.type==='group'&&activeChat.id===to):(activeChat.type==='private'&&activeChat.id===from);
     if(!relevant)return;
     if(isTyping)typingUsers.add(from);else typingUsers.delete(from);
@@ -547,6 +666,7 @@ function initSocket(){
     stopLiveLocationDisplay(sessionId);
   });
   socket.on('status-new',()=>{loadStatuses();});
+
   // Calls
   socket.on('call-invite',({from,callType,isGroup,groupId,addToCall,roomId})=>{
     if(isGroup&&groupId){handleGroupCallInvite(from,callType,groupId,roomId);return;}
@@ -567,8 +687,15 @@ function initSocket(){
   socket.on('call-rejected',({from})=>{hideOutgoingRing();showToast(`${from} declined the call`);});
   socket.on('call-ended',({from})=>{
     cleanupPeer(from);currentCallPeers=currentCallPeers.filter(u=>u!==from);
-    if(currentCallPeers.length===0)cleanupCall();
-    if(currentCallPeers.length===0&&isCallMinimized){miniCallPip.style.display='none';isCallMinimized=false;}
+    // FIXED: If on hold call ends, resume held call instead of ending everything
+    if(currentCallPeers.length===0){
+      if(isCallOnHold && heldCallPeer){
+        resumeHeldCall();
+      } else {
+        cleanupCall();
+        if(isCallMinimized){miniCallPip.style.display='none';isCallMinimized=false;}
+      }
+    }
   });
   socket.on('please-connect',async({to})=>{await sleep(120);await sendOfferTo(to);});
   socket.on('offer',async({from,offer})=>{
@@ -588,6 +715,101 @@ function initSocket(){
   socket.on('peer-toggle-media',({from,kind,enabled})=>{
     if(kind==='audio'){const el=$(`mute-ind-${from}`);if(el)el.style.display=enabled?'none':'flex';}
   });
+
+  // FIXED: Reconnect peers after page refresh
+  socket.on('call-peer-reconnect',async({from,callType,roomId})=>{
+    currentCallType=callType;currentCallRoomId=roomId;
+    if(!currentCallPeers.includes(from))currentCallPeers.push(from);
+    await sendOfferTo(from);
+  });
+  // ── BLOCK: jab koi hamein block kare — realtime UI update ──────────────────
+socket.on('you-were-blocked', ({ by, byId, hideAvatar, hideOnline, hideStatus }) => {
+  // Us user ke avatar ko hide karo hamari view mein
+  if (allUsersMap[by]) {
+    allUsersMap[by].avatarUrl = null;
+    allUsersMap[by].profile_pic = null;
+    allUsersMap[by].avatar_url = null;
+    if (hideOnline) allUsersMap[by].is_online = 0;
+  }
+  if (contacts[by]) {
+    contacts[by].avatarUrl = null;
+    contacts[by].profile_pic = null;
+    contacts[by].avatar_url = null;
+    if (hideOnline) contacts[by].is_online = 0;
+  }
+  // Agar chat open hai us user ke saath
+  if (activeChat?.type === 'private' && activeChat.id === by) {
+    chatHeaderStatus.textContent = 'unavailable';
+    chatHeaderStatus.style.color = 'var(--ts)';
+    setAvatarEl(chatHeaderAvatar, { username: by }); // default initial
+    // Input bar disable karo
+    messageInput.disabled = true;
+    messageInput.placeholder = 'You cannot message this user';
+    sendBtn.disabled = true;
+    attachBtn.disabled = true;
+    const vrb = $('voiceRecordBtn');
+    if (vrb) vrb.disabled = true;
+  }
+  renderChatList();
+  showToast(`${by} has blocked you`);
+});
+
+socket.on('you-were-unblocked', ({ by, byId }) => {
+  // Re-enable chat if open
+  if (activeChat?.type === 'private' && activeChat.id === by) {
+    messageInput.disabled = false;
+    messageInput.placeholder = 'Type a message';
+    sendBtn.disabled = false;
+    attachBtn.disabled = false;
+    const vrb = $('voiceRecordBtn');
+    if (vrb) vrb.disabled = false;
+    // Reload chat to get fresh data
+    openChat(activeChat);
+  }
+});
+
+// ── BLOCK: jab ham kisi ko block karein — socket emit ─────────────────────
+socket.on('block-action', ({ blockedUsername, blockedId, action }) => {
+  if (action === 'blocked') {
+    // Blocked user ke saath active chat mein input disable
+    if (activeChat?.type === 'private' && activeChat.id === blockedUsername) {
+      messageInput.disabled = true;
+      messageInput.placeholder = 'You have blocked this user';
+      sendBtn.disabled = false; // blocked user ko send allow hoga (already server blocks)
+    }
+    showToast(`${blockedUsername} blocked`);
+  } else {
+    if (activeChat?.type === 'private' && activeChat.id === blockedUsername) {
+      messageInput.disabled = false;
+      messageInput.placeholder = 'Type a message';
+    }
+    showToast(`${blockedUsername} unblocked`);
+  }
+});
+
+// ── CALL BLOCKED ─────────────────────────────────────────────────────────
+socket.on('call-blocked', ({ to }) => {
+  hideOutgoingRing();
+  showToast(`Cannot call ${to}`);
+});
+}
+
+/* ── Resume held call after new call ends ─── */
+function resumeHeldCall(){
+  if(!heldCallPeer)return;
+  isCallOnHold=false;
+  currentCallPeers=[heldCallPeer];
+  currentCallType=heldCallType;
+  currentCallRoomId=heldCallRoomId;
+  heldCallPeer=null;heldCallType='audio';heldCallRoomId=null;
+  // Resume local stream
+  if(localStream)localStream.getTracks().forEach(t=>t.enabled=true);
+  // Remove hold overlay from active call screen
+  const holdOv=activeCallScreen.querySelector('.hold-overlay');
+  if(holdOv)holdOv.remove();
+  activeCallScreen.style.display='flex';
+  showToast('Resumed previous call');
+  startCallTimer();
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -608,13 +830,14 @@ backBtn?.addEventListener('click',()=>{showSidebar();closeProfilePanel();activeC
 function showSidebar(){
   sidebarEl?.classList.remove('hidden');
   mainArea?.classList.remove('open');
-  document.body.classList.remove('chatting'); // 👈 ADD THIS
+  document.body.classList.remove('chatting');
 }
 function showMain(){
   sidebarEl?.classList.add('hidden');
   mainArea?.classList.add('open');
-  document.body.classList.add('chatting'); // 👈 ADD THIS
+  document.body.classList.add('chatting');
 }
+
 /* ════════════════════════════════════════════════════════════════════════════
    CHAT LIST
 ════════════════════════════════════════════════════════════════════════════ */
@@ -694,7 +917,7 @@ function updatePipStatus(isOnline,lastSeen){
 }
 // ════════════════════════════════════════════════════════════════════════════
 //  ChatApp  —  main.js   PART 2 / 4
-//  Open Chat · Render Messages · Send · Voice Note · Video Note
+//  Open Chat · Render Messages · Send · Voice Note
 //  File/Image Preview · Image Editor · Location · Reply · React · Forward
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -707,31 +930,84 @@ async function openChat({type,id,name,isGroup}){
   if(chats[key])chats[key].unread=0;
   showMain();closeProfilePanel();
   const settings=await getChatSettings(key);
-  // Lock check: only ask if is_locked=1 AND not already unlocked this session
-  if(settings.is_locked&&!lockedChats[key]){showLockedScreen(key,settings);return;}
+  
+  // FIXED: Lock check
+  if(settings.is_locked && !lockedChats[key]){
+    showLockedScreen(key,settings);
+    return;
+  }
+  
+  // Block check for private chats
+  if(type === 'private' && !isGroup){
+    const u = allUsersMap[id] || contacts[id];
+    if(u?.id) {
+      try {
+        const bs = await api('GET', `/api/block/check/${u.id}`);
+        activeChat.blockStatus = bs;
+      } catch(e) { activeChat.blockStatus = null; }
+    }
+  }
+  
   showChatUI(type,id,name,isGroup,key,settings);
 }
 
-function showLockedScreen(key,settings){
-  chatEmptyState.style.display='none';lockedChatScreen.style.display='flex';
-  chatHeader.style.display='none';messagesArea.style.display='none';inputBar.style.display='none';
-  const rBar=$('replyPreviewBar');if(rBar)rBar.style.display='none';
-  const recBar=$('recordingBar');if(recBar)recBar.style.display='none';
-  lockedChatPinError.textContent='';lockedChatPinInput.value='';
-  lockedChatUnlockBtn.onclick=async()=>{
-    const pin=lockedChatPinInput.value;
-    try{
-      const r=await api('POST',`/api/chat-settings/${encodeURIComponent(key)}/verify-pin`,{pin});
-      if(r.valid){lockedChats[key]=true;lockedChatScreen.style.display='none';if(activeChat)showChatUI(activeChat.type,activeChat.id,activeChat.name,activeChat.isGroup,key,settings||{});}
-      else lockedChatPinError.textContent='Incorrect PIN';
-    }catch{lockedChatPinError.textContent='Error verifying PIN';}
+function showLockedScreen(key, settings){
+  chatEmptyState.style.display = 'none';
+  lockedChatScreen.style.display = 'flex';
+  chatHeader.style.display = 'none';
+  messagesArea.style.display = 'none';
+  inputBar.style.display = 'none';
+  const rBar = $('replyPreviewBar');
+  if(rBar) rBar.style.display = 'none';
+  const recBar = $('recordingBar');
+  if(recBar) recBar.style.display = 'none';
+  
+  lockedChatPinError.textContent = '';
+  lockedChatPinInput.value = '';
+  lockedChatPinInput.focus();
+  
+  // Enter key support
+  const onEnter = (e) => {
+    if(e.key === 'Enter') lockedChatUnlockBtn.click();
+  };
+  lockedChatPinInput.removeEventListener('keydown', onEnter);
+  lockedChatPinInput.addEventListener('keydown', onEnter);
+  
+  lockedChatUnlockBtn.onclick = async () => {
+    const pin = lockedChatPinInput.value.trim();
+    if(!pin) { lockedChatPinError.textContent = 'Enter your PIN'; return; }
+    lockedChatUnlockBtn.textContent = 'Verifying...';
+    lockedChatUnlockBtn.disabled = true;
+    try {
+      const r = await api('POST',
+        `/api/chat-settings/${encodeURIComponent(key)}/verify-pin`,
+        { pin }
+      );
+      if(r.valid){
+        lockedChats[key] = true;
+        saveUnlockedChats();
+        lockedChatScreen.style.display = 'none';
+        if(activeChat) {
+          const s = await getChatSettings(key);
+          showChatUI(activeChat.type, activeChat.id, activeChat.name, activeChat.isGroup, key, s);
+        }
+      } else {
+        lockedChatPinError.textContent = '❌ Incorrect PIN. Try again.';
+        lockedChatPinInput.value = '';
+        lockedChatPinInput.focus();
+      }
+    } catch(e) {
+      lockedChatPinError.textContent = 'Error: ' + e.message;
+    } finally {
+      lockedChatUnlockBtn.textContent = 'Unlock';
+      lockedChatUnlockBtn.disabled = false;
+    }
   };
 }
 
 async function showChatUI(type,id,name,isGroup,key,settings){
   lockedChatScreen.style.display='none';chatEmptyState.style.display='none';
   chatHeader.style.display='flex';messagesArea.style.display='flex';inputBar.style.display='flex';
-  // Apply theme to entire main-area (header + messages + input)
   const theme=settings.theme||'default';
   if(theme!=='default')mainArea.setAttribute('data-chat-theme',theme);
   else mainArea.removeAttribute('data-chat-theme');
@@ -761,8 +1037,47 @@ async function showChatUI(type,id,name,isGroup,key,settings){
       chats[key].messages=rows.map(normaliseMsg);chats[key]._loaded=true;
     }catch(e){console.error('load history:',e);}
   }
-  renderMessages(key);renderChatList(searchInput?.value?.trim()?.toLowerCase()||'');
+  renderMessages(key);
+  renderChatList(searchInput?.value?.trim()?.toLowerCase()||'');
   messageInput.focus();
+
+  // Block status apply karo
+  const bs = activeChat?.blockStatus;
+  if(bs && !isGroup) {
+    if(bs.iBlockedThem) {
+      messageInput.disabled = false;
+      messageInput.placeholder = 'You have blocked this user';
+      // Note: server already blocks actual delivery
+    } else if(bs.theyBlockedMe) {
+      messageInput.disabled = true;
+      messageInput.placeholder = 'You cannot message this user';
+      sendBtn.disabled = true;
+      const vrb = $('voiceRecordBtn');
+      if(vrb) vrb.disabled = true;
+    } else {
+      messageInput.disabled = false;
+      messageInput.placeholder = 'Type a message';
+      sendBtn.disabled = false;
+      const vrb = $('voiceRecordBtn');
+      if(vrb) vrb.disabled = false;
+    }
+  } else if(!isGroup) {
+    // Reset to normal
+    messageInput.disabled = false;
+    messageInput.placeholder = 'Type a message';
+    sendBtn.disabled = false;
+    const vrb = $('voiceRecordBtn');
+    if(vrb) vrb.disabled = false;
+  }
+
+  // FIXED: Mark all unread messages as seen when opening chat
+  if(!isGroup && u?.id){
+    const unread=chats[key].messages.filter(m=>m.from===id && m.status!=='seen');
+    if(unread.length){
+      socket.emit('mark-all-seen',{fromUser:id});
+      unread.forEach(m=>{m.status='seen';});
+    }
+  }
 }
 
 async function getChatSettings(key){
@@ -833,7 +1148,6 @@ function appendMessageToDom(msg,scroll=true){
       const loc=JSON.parse(msg.content);
       const isLive=loc.duration>0;
       const wrap=document.createElement('div');wrap.className='live-loc-wrap';
-      // Always iframe — persists after page refresh
       const mapDiv=document.createElement('div');mapDiv.className='live-loc-map-el';
       mapDiv.id=`locmap-${msg.id}`;
       mapDiv.innerHTML=`<iframe src="https://maps.google.com/maps?q=${loc.lat},${loc.lng}&z=15&output=embed&hl=en" width="100%" height="100%" style="border:none;display:block" loading="lazy"></iframe>`;
@@ -843,7 +1157,6 @@ function appendMessageToDom(msg,scroll=true){
       wrap.innerHTML+=`<div><a href="https://maps.google.com/?q=${loc.lat},${loc.lng}" target="_blank" style="color:var(--accent);font-size:12px">Open in Maps</a></div>`;
       if(isLive)wrap.innerHTML+=`<div class="live-loc-timer" id="llt-${loc.sessionId}">Sharing live location...</div>`;
       bubble.appendChild(wrap);
-      // Upgrade to Google Maps API if available for live
       if(isLive&&loc.sessionId){
         liveLocStartTimes[loc.sessionId]=new Date();
         startLiveLocTimerDisplay(loc.sessionId);
@@ -898,11 +1211,11 @@ function appendMessageToDom(msg,scroll=true){
   if(msg.reactions?.length)renderReactionPills(reactRow,msg.reactions,msg.id);
   row.appendChild(reactRow);
 
-  // ── Desktop: right-click context menu ──
+  // Desktop: right-click context menu
   row.addEventListener('contextmenu',e=>{e.preventDefault();contextMsgId=msg.id;contextMsgObj=msg;showContextMenu(e.clientX,e.clientY,msg,isOwn);});
-  // ── Desktop: double-click → reaction picker ──
+  // Desktop: double-click → reaction picker
   bubble.addEventListener('dblclick',e=>{e.preventDefault();e.stopPropagation();showReactionPicker(msg.id,bubble);});
-  // ── Mobile: swipe right → reply ──
+  // Mobile: swipe right → reply
   let txStart=0,tyStart=0;
   row.addEventListener('touchstart',e=>{txStart=e.touches[0].clientX;tyStart=e.touches[0].clientY;},{passive:true});
   row.addEventListener('touchend',e=>{
@@ -920,15 +1233,14 @@ function upgradeLiveLocMap(mapDiv,lat,lng,sessionId){
     const mapObj=new google.maps.Map(mapDiv,{zoom:15,center:{lat,lng},disableDefaultUI:true});
     const myMarker=new google.maps.Marker({position:{lat,lng},map:mapObj,title:'Location',icon:{path:google.maps.SymbolPath.CIRCLE,scale:8,fillColor:'#00bfa5',fillOpacity:1,strokeColor:'#fff',strokeWeight:2}});
     liveLocMapInstances[sessionId]={map:mapObj,myMarker,peerMarkers:{}};
-  }catch(e){/* keep iframe */}
+  }catch(e){}
 }
 
 function startLiveLocTimerDisplay(sessionId){
   if(liveLocTimerIntervals[sessionId])clearInterval(liveLocTimerIntervals[sessionId]);
   liveLocTimerIntervals[sessionId]=setInterval(()=>{
     const el=$(`llt-${sessionId}`);if(!el)return;
-    const start=liveLocStartTimes[sessionId];
-    if(!start)return;
+    const start=liveLocStartTimes[sessionId];if(!start)return;
     const elapsed=Math.floor((Date.now()-start)/1000);
     const m=Math.floor(elapsed/60),s=elapsed%60;
     el.textContent=`Live • ${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')} elapsed`;
@@ -936,7 +1248,6 @@ function startLiveLocTimerDisplay(sessionId){
 }
 
 function updateLiveLocationBubble(from,lat,lng,sessionId){
-  // Update map if Google Maps instance exists
   if(sessionId&&liveLocMapInstances[sessionId]){
     const inst=liveLocMapInstances[sessionId];
     const pos={lat,lng};
@@ -948,7 +1259,6 @@ function updateLiveLocationBubble(from,lat,lng,sessionId){
       }else{inst.peerMarkers[from].setPosition(pos);}
     }
   }else if(sessionId){
-    // Update iframe
     const mapEl=document.querySelector(`#llt-${sessionId}`)?.closest('.live-loc-wrap')?.querySelector('.live-loc-map-el iframe');
     if(mapEl)mapEl.src=`https://maps.google.com/maps?q=${lat},${lng}&z=15&output=embed&hl=en`;
   }
@@ -1056,6 +1366,7 @@ function setReplyTo(msg){
   $('replyPreviewText').textContent=msg.content||(msg.fileName?`📎 ${msg.fileName}`:'Media');
   messageInput.focus();
 }
+
 function clearReplyTo(){
   replyToMsg=null;
   const bar=$('replyPreviewBar');if(bar)bar.style.display='none';
@@ -1125,11 +1436,10 @@ function stopTyping(){if(isTypingSent&&activeChat&&socket){socket.emit('typing',
 attachBtn?.addEventListener('click',e=>{e.stopPropagation();inputAttachMenu.style.display=(inputAttachMenu.style.display==='flex')?'none':'flex';});
 document.addEventListener('click',()=>{if(inputAttachMenu)inputAttachMenu.style.display='none';});
 attachFileOpt?.addEventListener('click',()=>{fileInput.click();inputAttachMenu.style.display='none';});
-attachCameraOpt?.addEventListener('click',()=>{cameraInput.click();inputAttachMenu.style.display='none';}); // triggers real camera
+attachCameraOpt?.addEventListener('click',()=>{cameraInput.click();inputAttachMenu.style.display='none';});
 attachLocationOpt?.addEventListener('click',()=>{openLiveLocationModal();inputAttachMenu.style.display='none';});
 attachContactOpt?.addEventListener('click',()=>{openShareContactModal();inputAttachMenu.style.display='none';});
 
-// Camera opens camera app (capture="environment")
 cameraInput?.addEventListener('change',()=>{if(cameraInput.files[0]){showMediaPreviewModal(cameraInput.files[0]);cameraInput.value='';}});
 fileInput?.addEventListener('change',()=>{if(fileInput.files[0]){showMediaPreviewModal(fileInput.files[0]);fileInput.value='';}});
 
@@ -1329,25 +1639,35 @@ function stopVoiceRecording(send){
   };
 }
 
-/* ── Share Contact ─── */
+/* ── FIXED: Share Contact — select recipient first, then share ─── */
 function openShareContactModal(){
+  if(!activeChat)return;
+  // Show contact picker — select WHICH contact to share
   const picker=document.createElement('div');picker.className='modal-overlay';
-  picker.innerHTML=`<div class="modal-card"><div class="modal-header"><h3>Share Contact</h3><button class="modal-close" id="closeContactPicker">✕</button></div><div class="modal-user-list" id="contactPickerList"></div></div>`;
+  picker.innerHTML=`<div class="modal-card"><div class="modal-header"><h3>Share Contact</h3><button class="modal-close" id="closeContactPicker">✕</button></div>
+    <div style="padding:10px 16px;font-size:12px;color:var(--ts)">Select a contact to share in this chat</div>
+    <div class="modal-user-list" id="contactPickerList"></div></div>`;
   document.body.appendChild(picker);
   picker.querySelector('#closeContactPicker').addEventListener('click',()=>picker.remove());
+  picker.addEventListener('click',e=>{if(e.target===picker)picker.remove();});
   const list=picker.querySelector('#contactPickerList');
-  Object.values(contacts).forEach(u=>{
-    if(u.username===myUser?.username)return;
+  // Show ALL contacts (including self) that can be shared, except current chat partner
+  const allContacts=Object.values(allUsersMap).filter(u=>u.id!==myUser?.id);
+  if(!allContacts.length){
+    list.innerHTML='<div style="padding:16px;color:var(--ts);text-align:center">No contacts available</div>';
+  }
+  allContacts.forEach(u=>{
     const item=document.createElement('div');item.className='modal-user-item';
-    item.innerHTML=`${makeAvatarHtml(u,36,14)}<div><div style="font-weight:600">${u.username}</div><div style="font-size:11px;color:var(--ts)">${u.email}</div></div>`;
+    item.innerHTML=`${makeAvatarHtml(u,36,14)}<div><div style="font-weight:600">${u.username}</div><div style="font-size:11px;color:var(--ts)">${u.email||''}</div></div>`;
     item.addEventListener('click',()=>{sendContactCard(u);picker.remove();});
     list.appendChild(item);
   });
 }
+
 function sendContactCard(u){
   if(!activeChat)return;
   const id=genId();
-  const content=JSON.stringify({id:u.id,username:u.username,email:u.email,avatarColor:u.avatar_color});
+  const content=JSON.stringify({id:u.id,username:u.username,email:u.email,avatarColor:u.avatar_color||u.avatarColor});
   const msg={id,from:myUser.username,msgType:'contact',content,time:new Date().toISOString(),status:'sent',reactions:[]};
   if(activeChat.type==='group'){msg.groupId=activeChat.id;socket.emit('group-message',{groupId:activeChat.id,content,msgType:'contact',msgId:id});}
   else{msg.to=activeChat.id;socket.emit('private-message',{to:activeChat.id,content,msgType:'contact',msgId:id});}
@@ -1412,7 +1732,6 @@ function startLiveLocationWatch(){
   liveLocWatchId=navigator.geolocation.watchPosition(pos=>{
     const{latitude:lat,longitude:lng,speed,heading,accuracy}=pos.coords;
     socket.emit('live-location-update',{to:activeChat?.type==='private'?activeChat.id:undefined,groupId:activeChat?.type==='group'?activeChat.id:undefined,lat,lng,speed:speed||0,heading:heading||0,accuracy:accuracy||0,sessionId:liveMsgId});
-    // Update own marker on map
     updateLiveLocationBubble(myUser.username,lat,lng,liveMsgId);
   },{enableHighAccuracy:true,maximumAge:5000});
   if(liveLocDuration>0)setTimeout(stopLiveLocation,liveLocDuration*60000);
@@ -1476,7 +1795,6 @@ async function openProfilePanel(id,isGroup){
     const chatK=chatKey('private',id);
     const cs=await getChatSettings(chatK);
     if(pipDMSelect){pipDMSelect.value=cs.disappearing_msgs||'off';updateDMHint(cs.disappearing_msgs||'off');}
-    // Lock toggle: show current state
     if(pipLockToggle){
       pipLockToggle.checked=!!cs.is_locked;
       pipLockPinWrap.style.display=cs.is_locked?'block':'none';
@@ -1508,11 +1826,38 @@ async function loadPipMedia(userId){
 }
 
 pipBlockBtn?.addEventListener('click',async()=>{
-  const uid=pipBlockBtn.dataset.uid,blocked=pipBlockBtn.dataset.blocked==='1';
+  const uid = pipBlockBtn.dataset.uid;
+  const blocked = pipBlockBtn.dataset.blocked === '1';
+  const targetUsername = activePipUser; // active pip user name
   try{
-    if(blocked){await api('DELETE',`/api/block/${uid}`);pipBlockLabel.textContent='Block';pipBlockBtn.dataset.blocked='0';showToast('Unblocked');}
-    else{await api('POST',`/api/block/${uid}`);pipBlockLabel.textContent='Unblock';pipBlockBtn.dataset.blocked='1';showToast('Blocked');}
-  }catch(e){showToast(e.message);}
+    if(blocked){
+      await api('DELETE',`/api/block/${uid}`);
+      pipBlockLabel.textContent = 'Block';
+      pipBlockBtn.dataset.blocked = '0';
+      // Socket emit for realtime
+      if(socket && targetUsername) {
+        socket.emit('unblock-user', { unblockedUsername: targetUsername });
+      }
+    } else {
+      await api('POST',`/api/block/${uid}`);
+      pipBlockLabel.textContent = 'Unblock';
+      pipBlockBtn.dataset.blocked = '1';
+      // Socket emit for realtime
+      if(socket && targetUsername) {
+        socket.emit('block-user', { blockedUsername: targetUsername });
+        // Blocked user ka avatar hide karo hamari side se bhi
+        if(allUsersMap[targetUsername]) {
+          allUsersMap[targetUsername].avatarUrl = null;
+          allUsersMap[targetUsername].profile_pic = null;
+        }
+        if(contacts[targetUsername]) {
+          contacts[targetUsername].avatarUrl = null;
+          contacts[targetUsername].profile_pic = null;
+        }
+        renderChatList();
+      }
+    }
+  } catch(e){ showToast(e.message); }
 });
 
 pipShareContactBtn?.addEventListener('click',()=>{
@@ -1528,7 +1873,7 @@ pipDMSelect?.addEventListener('change',async()=>{
 });
 function updateDMHint(val){if(pipDMHint)pipDMHint.textContent=val==='off'?'Off':val;}
 
-// Theme swatches — apply to full mainArea
+// Theme swatches
 pipThemeRow?.querySelectorAll('.theme-swatch').forEach(s=>{
   s.addEventListener('click',async()=>{
     if(!activeChat)return;
@@ -1541,27 +1886,60 @@ pipThemeRow?.querySelectorAll('.theme-swatch').forEach(s=>{
   });
 });
 
-// Lock chat — FIXED: if unlocked (toggle off), clear pin requirement for this session
-pipLockToggle?.addEventListener('change',()=>{
-  pipLockPinWrap.style.display=pipLockToggle.checked?'block':'none';
-});
-pipSaveLockBtn?.addEventListener('click',async()=>{
-  if(!activeChat)return;
-  const key=activeChatKey(),pin=pipLockPinInput.value;
-  if(pipLockToggle.checked&&pin.length<4){showToast('Enter at least 4 digit PIN');return;}
-  try{
-    await api('PUT',`/api/chat-settings/${encodeURIComponent(key)}`,{isLocked:pipLockToggle.checked,lockPin:pipLockToggle.checked?pin:null});
-    if(pipLockToggle.checked){
-      lockedChats[key]=true; // keep unlocked for current session after setting
-    }else{
-      delete lockedChats[key]; // remove session unlock — but chat is now unlocked globally
-    }
-    showToast(pipLockToggle.checked?'Chat locked!':'Chat unlocked!');
-    pipLockPinInput.value='';
-  }catch(e){showToast(e.message);}
+// FIXED: Lock toggle
+pipLockToggle?.addEventListener('change', () => {
+  if(pipLockPinWrap) {
+    pipLockPinWrap.style.display = pipLockToggle.checked ? 'block' : 'none';
+  }
+  if(!pipLockToggle.checked && pipLockPinInput) {
+    pipLockPinInput.value = '';
+  }
 });
 
-// Export chat — FIXED: uses Authorization header via fetch
+// FIXED: Save lock settings
+pipSaveLockBtn?.addEventListener('click', async () => {
+  if(!activeChat) return;
+  const key = activeChatKey();
+  const isLocked = pipLockToggle?.checked || false;
+  const pin = pipLockPinInput?.value?.trim() || '';
+  
+  if(isLocked && pin.length < 4) {
+    showToast('Enter at least 4 digit PIN');
+    return;
+  }
+  
+  try {
+    pipSaveLockBtn.textContent = 'Saving...';
+    pipSaveLockBtn.disabled = true;
+    
+    await api('PUT', `/api/chat-settings/${encodeURIComponent(key)}`, {
+      isLocked: isLocked,
+      lockPin: isLocked ? pin : null
+    });
+    
+    if(isLocked) {
+      // Locked kiya — current session mein unlocked rehne do
+      lockedChats[key] = true;
+      saveUnlockedChats();
+      showToast('🔒 Chat locked! PIN set.');
+    } else {
+      // Unlocked kiya — session se bhi hatao
+      delete lockedChats[key];
+      saveUnlockedChats();
+      showToast('🔓 Chat unlocked!');
+    }
+    
+    if(pipLockPinInput) pipLockPinInput.value = '';
+    if(pipLockPinWrap) pipLockPinWrap.style.display = 'none';
+    
+  } catch(e) {
+    showToast(e.message);
+  } finally {
+    pipSaveLockBtn.textContent = 'Save Lock Settings';
+    pipSaveLockBtn.disabled = false;
+  }
+});
+// Export chat
 if(pipExportBtn){
   pipExportBtn.addEventListener('click',async e=>{
     e.stopImmediatePropagation();
@@ -1652,6 +2030,8 @@ profilePicInput?.addEventListener('change',async()=>{
     myUser.avatarUrl=url;localStorage.setItem('chatapp_user',JSON.stringify(myUser));
     setAvatarEl(profileBigAvatar,myUser);setAvatarEl(myAvatarEl,myUser);
     if(myStatusAvatar)setAvatarEl(myStatusAvatar,myUser);
+    // FIXED: Broadcast avatar update to all contacts via socket
+    socket.emit('avatar-updated',{avatarUrl:url});
     showToast('Photo updated!');
   }catch{showToast('Upload failed');}
   profilePicInput.value='';
@@ -1681,9 +2061,165 @@ profileAboutInput?.addEventListener('input',()=>{
 /* ════════════════════════════════════════════════════════════════════════════
    CALL HISTORY
 ════════════════════════════════════════════════════════════════════════════ */
-async function loadCallHistory(){
-  try{const calls=await api('GET','/api/calls');renderCallHistory(calls);}
-  catch(e){console.error('call history:',e);}
+// ── State for call history ─────────────────────────────────────────────────
+let callHistoryFilter = 'all';
+let callHistoryCustomFrom = '';
+let callHistoryCustomTo = '';
+
+async function loadCallHistory(filter, from, to) {
+  filter = filter || callHistoryFilter || 'all';
+  try {
+    let url = '/api/calls';
+    const params = new URLSearchParams();
+    if(filter && filter !== 'all') params.set('filter', filter);
+    if(filter === 'custom') {
+      if(from) params.set('from', from);
+      if(to) params.set('to', to);
+    }
+    if(params.toString()) url += '?' + params.toString();
+    const calls = await api('GET', url);
+    renderCallHistory(calls);
+  } catch(e) { console.error('call history:', e); }
+}
+
+function renderCallHistory(calls){
+  const container = callHistoryList;
+  
+  // Filter bar HTML
+  const filterBarId = 'callHistoryFilterBar';
+  let filterBar = $(filterBarId);
+  if(!filterBar) {
+    filterBar = document.createElement('div');
+    filterBar.id = filterBarId;
+    filterBar.className = 'call-history-filter-bar';
+    filterBar.innerHTML = `
+      <div class="chf-scroll">
+        <button class="chf-btn active" data-f="all">All</button>
+        <button class="chf-btn" data-f="today">Today</button>
+        <button class="chf-btn" data-f="yesterday">Yesterday</button>
+        <button class="chf-btn" data-f="week">This Week</button>
+        <button class="chf-btn" data-f="month">This Month</button>
+        <button class="chf-btn" data-f="year">This Year</button>
+        <button class="chf-btn" data-f="custom">Custom</button>
+      </div>
+      <div class="chf-custom-wrap" id="chfCustomWrap" style="display:none">
+        <input type="date" id="chfFrom" class="chf-date-input">
+        <span style="color:var(--ts);font-size:12px">to</span>
+        <input type="date" id="chfTo" class="chf-date-input">
+        <button class="chf-search-btn" id="chfSearchBtn">Search</button>
+      </div>
+      <div class="chf-actions">
+        <button class="chf-clear-all" id="chfClearAll" title="Clear all history">🗑 Clear All</button>
+      </div>
+    `;
+    container.parentNode.insertBefore(filterBar, container);
+    
+    // Filter button listeners
+    filterBar.querySelectorAll('.chf-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        filterBar.querySelectorAll('.chf-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        callHistoryFilter = btn.dataset.f;
+        const customWrap = $('chfCustomWrap');
+        if(customWrap) customWrap.style.display = callHistoryFilter === 'custom' ? 'flex' : 'none';
+        if(callHistoryFilter !== 'custom') loadCallHistory(callHistoryFilter);
+      });
+    });
+    
+    // Custom date search
+    $('chfSearchBtn')?.addEventListener('click', () => {
+      const from = $('chfFrom')?.value;
+      const to = $('chfTo')?.value;
+      if(!from || !to) { showToast('Select from and to dates'); return; }
+      loadCallHistory('custom', from, to);
+    });
+    
+    // Clear all
+    $('chfClearAll')?.addEventListener('click', async () => {
+      if(!confirm('Clear all call history? Only cleared for you.')) return;
+      try {
+        await api('DELETE', '/api/calls');
+        renderCallHistory([]);
+        showToast('Call history cleared');
+      } catch(e) { showToast(e.message); }
+    });
+  }
+  
+  container.innerHTML = '';
+  if(!calls.length){
+    container.innerHTML=`<div class="empty-panel-hint">
+      <svg viewBox="0 0 24 24" width="40" height="40" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="currentColor" stroke-width="1.5"/></svg>
+      <p>No calls found</p>
+    </div>`;
+    return;
+  }
+  
+  calls.forEach(c=>{
+    const isMe = c.caller_id === myUser.id;
+    const otherName = isMe ? (c.callee_name || c.group_name || '?') : (c.caller_name || '?');
+    const otherColor = isMe ? (c.callee_color || '#00A884') : (c.caller_color || '#00A884');
+    const otherPic = isMe ? (c.callee_pic || null) : (c.caller_pic || null);
+    
+    let direction, dirClass;
+    if(c.status === 'missed') { direction = '↙ Missed'; dirClass = 'ch-icon-miss'; }
+    else if(isMe) { direction = '↗ Outgoing'; dirClass = 'ch-icon-out'; }
+    else { direction = '↙ Incoming'; dirClass = 'ch-icon-in'; }
+    
+    const d = new Date(c.started_at);
+    const dateStr = d.toLocaleDateString([], {day:'2-digit', month:'short', year:'numeric'});
+    const timeStr = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    
+    const item = document.createElement('div');
+    item.className = 'call-hist-item';
+    item.dataset.callId = c.id;
+    
+    // Avatar with profile pic support
+    const avHtml = otherPic 
+      ? `<div class="ch-avatar" style="background:${otherColor};overflow:hidden;padding:0"><img src="${otherPic}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"></div>`
+      : `<div class="ch-avatar" style="background:${otherColor}">${getInitial(otherName)}</div>`;
+    
+    item.innerHTML = `
+      ${avHtml}
+      <div class="ch-body">
+        <div class="ch-name">${otherName}</div>
+        <div class="ch-meta">
+          <span class="${dirClass}">${direction}</span>
+          <span>·</span>
+          <span>${c.call_type === 'video' ? '📹' : '📞'}${c.is_group ? ' Group' : ''}</span>
+          ${c.duration_s ? `<span>· ${fmtDuration(c.duration_s)}</span>` : ''}
+        </div>
+      </div>
+      <div class="ch-side">
+        <div class="ch-time">${dateStr}<br><small>${timeStr}</small></div>
+        <button class="ch-delete-btn" data-id="${c.id}" title="Delete this call">🗑</button>
+      </div>
+    `;
+    
+    // Open chat on item click (not on delete btn)
+    item.addEventListener('click', (e) => {
+      if(e.target.closest('.ch-delete-btn')) return;
+      if(!c.is_group && otherName && contacts[otherName]){
+        openChat({type:'private', id:otherName, name:otherName, isGroup:false});
+        switchPanel('chats');
+        if(window.innerWidth <= 768) showMain();
+      }
+    });
+    
+    // Delete button
+    item.querySelector('.ch-delete-btn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+        await api('DELETE', `/api/calls/${c.id}`);
+        item.style.opacity = '0';
+        item.style.transform = 'translateX(100%)';
+        item.style.transition = 'all 0.3s ease';
+        setTimeout(() => item.remove(), 300);
+        showToast('Call removed');
+      } catch(err) { showToast(err.message); }
+    });
+    
+    container.appendChild(item);
+  });
 }
 function renderCallHistory(calls){
   callHistoryList.innerHTML='';
@@ -1862,6 +2398,7 @@ closeViewersModal?.addEventListener('click',()=>{statusViewersModal.style.displa
 // ════════════════════════════════════════════════════════════════════════════
 //  ChatApp  —  main.js   PART 4 / 4
 //  Calls · WebRTC · Media · Ringtone · Google Maps · Utils
+//  FIXED: local video PiP in call, hold/resume, page refresh call persist
 // ════════════════════════════════════════════════════════════════════════════
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -1872,6 +2409,26 @@ async function startMedia(video=false){
   try{localStream=await navigator.mediaDevices.getUserMedia({audio:true,video});}
   catch{try{localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});}catch{}}
   if(localVideo&&localStream)localVideo.srcObject=localStream;
+  // FIXED: Also update local PiP video in active call screen
+  updateLocalVideoPip();
+}
+
+/* ── FIXED: Local video PiP element in active call ─── */
+function updateLocalVideoPip(){
+  // Create or update the draggable local video pip inside active call screen
+  let localWrap=$('localVideoWrap');
+  if(!localWrap&&activeCallScreen){
+    localWrap=document.createElement('div');
+    localWrap.id='localVideoWrap';
+    localWrap.innerHTML=`<video id="localVidPip" autoplay muted playsinline style="width:100%;height:100%;object-fit:cover;display:block"></video>`;
+    activeCallScreen.appendChild(localWrap);
+    makeDraggable(localWrap);
+  }
+  if(localWrap){
+    const vid=localWrap.querySelector('video');
+    if(vid&&localStream)vid.srcObject=localStream;
+    localWrap.style.display=(currentCallType==='video'&&localStream?.getVideoTracks().length)?'block':'none';
+  }
 }
 
 camFlipBtn?.addEventListener('click',async()=>{
@@ -1884,6 +2441,7 @@ camFlipBtn?.addEventListener('click',async()=>{
     localStream.getVideoTracks().forEach(t=>localStream.removeTrack(t));
     localStream.addTrack(nvt);
     if(localVideo)localVideo.srcObject=localStream;
+    updateLocalVideoPip();
     for(const pc of Object.values(peerConnections)){
       const sender=pc.getSenders().find(s=>s.track?.kind==='video');if(sender)sender.replaceTrack(nvt);
     }
@@ -1934,18 +2492,72 @@ rejectCallBtn?.addEventListener('click',()=>{
   delete pendingOffers[pendingIncomingCaller];pendingIncomingCaller=null;
   incomingCallScreen.style.display='none';playRingtone(false);
 });
+
+/* ── FIXED: iocDecline ─── */
 iocDecline?.addEventListener('click',()=>{
   socket.emit('call-rejected',{to:pendingIncomingCaller,roomId:pendingIncomingRoomId});
   delete pendingOffers[pendingIncomingCaller];pendingIncomingCaller=null;
   incomingOnCallBanner.style.display='none';playRingtone(false);
 });
+
+/* ── FIXED: Hold & Accept — put current call on hold, answer new one ─── */
 iocHoldAccept?.addEventListener('click',async()=>{
-  localStream?.getTracks().forEach(t=>t.enabled=false);
+  if(!pendingIncomingCaller)return;
+  // Save current call state as held
+  heldCallPeer=currentCallPeers[0]||null;
+  heldCallType=currentCallType;
+  heldCallRoomId=currentCallRoomId;
+  isCallOnHold=true;
+
+  // Pause current call media (audio + video)
+  if(localStream)localStream.getTracks().forEach(t=>t.enabled=false);
+  // Notify current peer they are on hold
+  if(heldCallPeer){
+    socket.emit('call-hold',{to:heldCallPeer,onHold:true});
+  }
+  // Add hold overlay to active call screen
+  const existingHold=activeCallScreen.querySelector('.hold-overlay');
+  if(!existingHold){
+    const ov=document.createElement('div');ov.className='hold-overlay';
+    ov.innerHTML=`<div class="hold-overlay-text">⏸ Call on Hold</div><div class="hold-overlay-sub">${heldCallPeer||''}</div>`;
+    activeCallScreen.appendChild(ov);
+  }
+
+  // Accept new incoming call
   incomingOnCallBanner.style.display='none';
-  activeCallScreen.style.display='none';clearInterval(callTimer);callDuration.textContent='00:00';currentCallPeers=[];
+  const newCaller=pendingIncomingCaller;
+  const newType=pendingIncomingCallType;
+  const newRoomId=pendingIncomingRoomId;
+  pendingIncomingCaller=null;pendingIncomingRoomId=null;
+
+  // Reset call state for new call
+  currentCallType=newType;currentCallRoomId=newRoomId;
+  currentCallPeers=[];
+  if(!localStream)await startMedia(newType==='video');
+  else localStream.getTracks().forEach(t=>t.enabled=true);
+
+  socket.emit('call-accepted',{to:newCaller,callType:newType,roomId:newRoomId});
+  await showActiveCallScreen(newCaller,newType);
+  if(pendingOffers[newCaller]){processOffer(newCaller,pendingOffers[newCaller]);delete pendingOffers[newCaller];}
+  playRingtone(false);
+});
+
+/* ── FIXED: Cut current call and accept new one ─── */
+iocCutAccept?.addEventListener('click',async()=>{
+  if(!pendingIncomingCaller)return;
+  // End current call cleanly
+  const dur=callSeconds;
+  currentCallPeers.forEach(u=>socket.emit('call-ended',{to:u,isGroup:isGroupCall,groupId:currentGroupCallId,roomId:currentCallRoomId,durationSeconds:dur}));
+  Object.keys(peerConnections).forEach(cleanupPeer);
+  // Reset hold state too
+  isCallOnHold=false;heldCallPeer=null;
+  // Clear active call screen
+  activeCallScreen.style.display='none';clearInterval(callTimer);callSeconds=0;
+  currentCallPeers=[];
+  // Now accept
+  incomingOnCallBanner.style.display='none';
   await acceptBannerCall();
 });
-iocCutAccept?.addEventListener('click',async()=>{endAllCalls();incomingOnCallBanner.style.display='none';await sleep(300);await acceptBannerCall();});
 
 async function acceptBannerCall(){
   if(!pendingIncomingCaller)return;
@@ -1957,12 +2569,14 @@ async function acceptBannerCall(){
   if(pendingOffers[from]){processOffer(from,pendingOffers[from]);delete pendingOffers[from];}
   pendingIncomingCaller=null;pendingIncomingRoomId=null;
 }
+
 async function handleGroupCallInvite(from,callType,groupId,roomId){
   currentCallType=callType;currentCallRoomId=roomId;isGroupCall=true;currentGroupCallId=groupId;
   await startMedia(callType==='video');
   socket.emit('call-accepted',{to:from,callType,roomId});
   await showActiveCallScreen(from,callType);
 }
+
 async function showActiveCallScreen(peerName,callType){
   currentCallPeers.push(peerName);
   activeCallScreen.style.display='flex';
@@ -1970,16 +2584,54 @@ async function showActiveCallScreen(peerName,callType){
   setAvatarEl(audioCallAvatar,u||{username:peerName});
   audioCallName.textContent=peerName;
   setAvatarEl(miniPipAvatar,u||{username:peerName});miniPipName.textContent=peerName;
-  if(callType==='video'){callVideoArea.style.display='block';audioCallDisplay.style.display='none';aCallVideoBtn.style.display='flex';}
-  else{callVideoArea.style.display='none';audioCallDisplay.style.display='flex';aCallVideoBtn.style.display='none';}
+  if(callType==='video'){
+    callVideoArea.style.display='block';audioCallDisplay.style.display='none';aCallVideoBtn.style.display='flex';
+    // FIXED: Show local video PiP
+    setTimeout(()=>updateLocalVideoPip(),200);
+  }else{
+    callVideoArea.style.display='none';audioCallDisplay.style.display='flex';aCallVideoBtn.style.display='none';
+    const localWrap=$('localVideoWrap');if(localWrap)localWrap.style.display='none';
+  }
   aCallAddBtn.style.display='flex';addToCallBtn.style.display='flex';
   startCallTimer();
+
+  // FIXED: Mini PiP also update local video
+  updateMiniPipLocalVideo();
 }
+
+/* ── FIXED: Mini PiP shows local video in corner ─── */
+function updateMiniPipLocalVideo(){
+  if(!miniCallPip)return;
+  let localPip=miniCallPip.querySelector('.mini-pip-local');
+  if(!localPip){
+    const remoteWrap=miniCallPip.querySelector('.mini-pip-remote');
+    if(remoteWrap){
+      localPip=document.createElement('div');localPip.className='mini-pip-local';
+      if(currentCallType==='video'&&localStream?.getVideoTracks().length){
+        const vid=document.createElement('video');vid.autoplay=true;vid.muted=true;vid.playsInline=true;
+        vid.style.cssText='width:100%;height:100%;object-fit:cover;display:block';
+        if(localStream)vid.srcObject=localStream;
+        localPip.appendChild(vid);
+      }else{
+        const av=document.createElement('div');av.className='mini-pip-local-avatar';
+        av.textContent=getInitial(myUser?.username||'?');
+        localPip.appendChild(av);
+      }
+      remoteWrap.appendChild(localPip);
+    }
+  }
+}
+
 activeEndCallBtn?.addEventListener('click',endAllCalls);
 miniPipEnd?.addEventListener('click',endAllCalls);
 function endAllCalls(){
   const dur=callSeconds;
   currentCallPeers.forEach(u=>socket.emit('call-ended',{to:u,isGroup:isGroupCall,groupId:currentGroupCallId,roomId:currentCallRoomId,durationSeconds:dur}));
+  // If there was a held call, end that too
+  if(isCallOnHold&&heldCallPeer){
+    socket.emit('call-ended',{to:heldCallPeer,isGroup:false,roomId:heldCallRoomId,durationSeconds:0});
+    isCallOnHold=false;heldCallPeer=null;
+  }
   Object.keys(peerConnections).forEach(cleanupPeer);
   cleanupCall();
   setTimeout(loadCallHistory,600);
@@ -1987,23 +2639,36 @@ function endAllCalls(){
 function cleanupCall(){
   activeCallScreen.style.display='none';miniCallPip.style.display='none';isCallMinimized=false;
   callVideoArea.style.display='none';audioCallDisplay.style.display='flex';
-  clearInterval(callTimer);callDuration.textContent='00:00';
+  clearInterval(callTimer);callDuration.textContent='00:00';callSeconds=0;
   currentCallPeers=[];isMuted=isVideoOff=false;
   aCallMuteBtn.classList.remove('active');aCallVideoBtn.classList.remove('active');
   aCallAddBtn.style.display='none';addToCallBtn.style.display='none';
   isGroupCall=false;currentGroupCallId=null;currentCallRoomId=null;
+  // Remove hold overlay
+  const holdOv=activeCallScreen?.querySelector('.hold-overlay');if(holdOv)holdOv.remove();
+  isCallOnHold=false;heldCallPeer=null;heldCallType='audio';heldCallRoomId=null;
+  // Remove local video PiP wrap
+  const lw=$('localVideoWrap');if(lw)lw.style.display='none';
+  // Remove local pip from mini
+  miniCallPip?.querySelector('.mini-pip-local')?.remove();
   if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;}
   remoteVideosGrid.innerHTML='';
+  if(miniRemoteVideo)miniRemoteVideo.srcObject=null;
 }
+
+/* ── FIXED: Minimize call — show local video in mini PiP corner ─── */
 aCallMinimizeBtn?.addEventListener('click',()=>{
   activeCallScreen.style.display='none';
   const fv=remoteVideosGrid.querySelector('video');
   if(fv){miniRemoteVideo.srcObject=fv.srcObject;miniPipAvatar.style.display='none';}
-  else miniPipAvatar.style.display='flex';
-  miniCallPip.style.display='flex';isCallMinimized=true;
+  else{miniRemoteVideo.srcObject=null;miniPipAvatar.style.display='flex';}
+  miniCallPip.style.display='flex';
+  isCallMinimized=true;
+  updateMiniPipLocalVideo();
 });
-miniPipExpand?.addEventListener('click',()=>{miniCallPip.style.display='none';activeCallScreen.style.display='flex';isCallMinimized=false;});
+miniPipExpand?.addEventListener('click',()=>{miniCallPip.style.display='none';activeCallScreen.style.display='flex';isCallMinimized=false;updateLocalVideoPip();});
 miniCallPip?.addEventListener('click',e=>{if(e.target===miniCallPip||e.target.closest('.mini-pip-info'))miniPipExpand.click();});
+
 function startCallTimer(){
   callSeconds=0;clearInterval(callTimer);
   callTimer=setInterval(()=>{
@@ -2020,6 +2685,8 @@ aCallMuteBtn?.addEventListener('click',()=>{
 aCallVideoBtn?.addEventListener('click',()=>{
   isVideoOff=!isVideoOff;localStream?.getVideoTracks().forEach(t=>t.enabled=!isVideoOff);
   aCallVideoBtn.classList.toggle('active',isVideoOff);
+  // Hide/show local PiP
+  const lw=$('localVideoWrap');if(lw)lw.style.display=isVideoOff?'none':'block';
   currentCallPeers.forEach(u=>socket.emit('toggle-media',{to:u,kind:'video',enabled:!isVideoOff}));
 });
 aCallAddBtn?.addEventListener('click',openAddToCallModal);
@@ -2042,7 +2709,11 @@ closeAddToCallModal?.addEventListener('click',()=>{addToCallModal.style.display=
 ════════════════════════════════════════════════════════════════════════════ */
 function createPeerConnection(remoteUser){
   if(peerConnections[remoteUser])return peerConnections[remoteUser];
-  const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'stun:stun2.l.google.com:19302'}]});
+  const pc=new RTCPeerConnection({iceServers:[
+    {urls:'stun:stun.l.google.com:19302'},
+    {urls:'stun:stun1.l.google.com:19302'},
+    {urls:'stun:stun2.l.google.com:19302'}
+  ]});
   if(localStream)localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
   pc.ontrack=e=>{
     if(e.streams&&e.streams[0]){
@@ -2120,3 +2791,77 @@ function playRingtone(start){
 window.initGoogleMaps=function(){
   window.googleMapsReady=true;window.dispatchEvent(new Event('google-maps-ready'));
 };
+
+/* ── Page Visibility — FIXED: handle call on page refresh/tab switch ─── */
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden)return;
+  // When page becomes visible again, re-request media if in call
+  if(currentCallPeers.length>0&&!localStream){
+    startMedia(currentCallType==='video').then(()=>{
+      // Re-add tracks to all peer connections
+      currentCallPeers.forEach(peer=>{
+        const pc=peerConnections[peer];
+        if(pc&&localStream){
+          const senders=pc.getSenders();
+          localStream.getTracks().forEach(track=>{
+            const sender=senders.find(s=>s.track?.kind===track.kind);
+            if(sender)sender.replaceTrack(track);
+            else pc.addTrack(track,localStream);
+          });
+        }
+      });
+    });
+  }
+});
+
+/* ── FIXED: Before page unload, save call state to sessionStorage ─── */
+window.addEventListener('beforeunload',()=>{
+  if(currentCallPeers.length>0&&currentCallRoomId){
+    sessionStorage.setItem('activeCallState',JSON.stringify({
+      peers:currentCallPeers,
+      roomId:currentCallRoomId,
+      callType:currentCallType,
+      isGroup:isGroupCall,
+      groupId:currentGroupCallId
+    }));
+  }else{
+    sessionStorage.removeItem('activeCallState');
+  }
+});
+
+/* ── FIXED: On page load, check if we need to rejoin a call ─── */
+window.addEventListener('load',()=>{
+  const savedCall=sessionStorage.getItem('activeCallState');
+  if(savedCall){
+    try{
+      const state=JSON.parse(savedCall);
+      sessionStorage.removeItem('activeCallState');
+      // After auth, rejoin
+      const origOnAuth=onAuthSuccess;
+      // Stored, will be rejoined after socket connects via 'connect' event in initSocket
+      window.__pendingCallRejoin=state;
+    }catch{}
+  }
+});
+
+// Handle call rejoin after socket connects
+const _origInitSocket=initSocket;
+// The connect event in initSocket already handles rejoin-call emit
+// We additionally handle the pending rejoin here
+setTimeout(()=>{
+  if(window.__pendingCallRejoin&&socket){
+    const state=window.__pendingCallRejoin;
+    delete window.__pendingCallRejoin;
+    currentCallType=state.callType;
+    currentCallRoomId=state.roomId;
+    isGroupCall=state.isGroup;
+    currentGroupCallId=state.groupId;
+    currentCallPeers=state.peers;
+    startMedia(state.callType==='video').then(()=>{
+      state.peers.forEach(peer=>{
+        showActiveCallScreen(peer,state.callType);
+        socket.emit('call-peer-reconnect',{to:peer,callType:state.callType,roomId:state.roomId});
+      });
+    });
+  }
+},2000);

@@ -329,8 +329,8 @@
     <div class="mini-pip-avatar" id="miniPipAvatar">?</div>
   </div>
   <div class="mini-pip-info">
-    <span class="mini-pip-name" id="miniPipName">Call</span>
-    <span class="mini-pip-dur" id="miniPipDur">00:00</span>
+    <span class="mini-pip-name" id="miniPipName">Call</span><br>
+    <span class="mini-pip-dur" id="miniPipDur">00:00</span><br>
   </div>
   <div class="mini-pip-btns">
     <button class="mini-pip-btn expand" id="miniPipExpand" title="Expand">
@@ -413,16 +413,234 @@
       </div>
     </div>
 
-    <!-- ── Calls panel ── -->
     <div class="sidebar-panel" id="panelCalls">
-      <div class="call-history-list" id="callHistoryList">
-        <div class="empty-panel-hint">
-          <svg viewBox="0 0 24 24" width="40" height="40" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="currentColor" stroke-width="1.5"/></svg>
-          <p>No call history yet</p>
-        </div>
-      </div>
+      <div class="call-history-list" id="callHistoryList"></div>
     </div>
+    <style>
+      /* ── Call History Filter Bar ─── */
+      .call-history-filter-bar {
+        padding: 10px 12px 6px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg2);
+      }
+      .chf-scroll {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        scrollbar-width: none;
+        padding-bottom: 6px;
+      }
+      .chf-scroll::-webkit-scrollbar { display: none; }
+      .chf-btn {
+        flex-shrink: 0;
+        padding: 5px 12px;
+        border-radius: 99px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--ts);
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.15s;
+        font-family: var(--font);
+      }
+      .chf-btn:hover { background: var(--bg3); color: var(--tp); }
+      .chf-btn.active {
+        background: var(--accent);
+        color: #000;
+        border-color: var(--accent);
+        font-weight: 700;
+      }
+      .chf-custom-wrap {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 0 4px;
+        flex-wrap: wrap;
+      }
+      .chf-date-input {
+        flex: 1;
+        min-width: 130px;
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg3);
+        color: var(--tp);
+        font-size: 12px;
+        font-family: var(--font);
+        outline: none;
+      }
+      .chf-date-input:focus { border-color: var(--accent); }
+      .chf-search-btn {
+        padding: 6px 14px;
+        border-radius: 8px;
+        border: none;
+        background: var(--accent);
+        color: #000;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        font-family: var(--font);
+      }
+      .chf-actions {
+        display: flex;
+        justify-content: flex-end;
+        padding: 4px 0 0;
+      }
+      .chf-clear-all {
+        background: transparent;
+        border: none;
+        color: #e53e3e;
+        font-size: 12px;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-family: var(--font);
+      }
+      .chf-clear-all:hover { background: rgba(229,62,62,0.1); }
 
+      /* ── Call History Item with Delete ─── */
+      .call-hist-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        cursor: pointer;
+        transition: background 0.12s;
+        border-bottom: 1px solid var(--border);
+        position: relative;
+      }
+      .call-hist-item:hover { background: var(--bg3); }
+      .call-hist-item:hover .ch-delete-btn { opacity: 1; }
+      .ch-avatar {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 700;
+        font-size: 18px;
+        color: #fff;
+        flex-shrink: 0;
+      }
+      .ch-body { flex: 1; min-width: 0; }
+      .ch-name { font-weight: 600; font-size: 14px; color: var(--tp); }
+      .ch-meta { display: flex; gap: 5px; font-size: 12px; color: var(--ts); margin-top: 2px; }
+      .ch-icon-miss { color: #e53e3e; }
+      .ch-icon-out { color: var(--accent); }
+      .ch-icon-in { color: #63b3ed; }
+      .ch-side {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+      .ch-time {
+        font-size: 11px;
+        color: var(--ts);
+        text-align: right;
+        line-height: 1.4;
+      }
+      .ch-time small { font-size: 10px; }
+      .ch-delete-btn {
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        opacity: 0;
+        transition: opacity 0.15s;
+        padding: 4px;
+        border-radius: 4px;
+        line-height: 1;
+      }
+      .ch-delete-btn:hover { background: rgba(229,62,62,0.15); }
+
+      /* ── Block UI ─── */
+      .input-blocked-notice {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 16px;
+        background: #1a0a0a;
+        border-top: 1px solid #3d1a1a;
+        color: #fc8181;
+        font-size: 12px;
+        text-align: center;
+      }
+
+      /* ── Locked Chat Screen ─── */
+      .locked-chat-screen {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg1);
+      }
+      .locked-chat-content { text-align: center; max-width: 300px; padding: 24px; }
+      .locked-pin-input {
+        width: 180px;
+        text-align: center;
+        font-size: 28px;
+        letter-spacing: 8px;
+        padding: 12px 16px;
+        border-radius: 12px;
+        border: 2px solid var(--border);
+        background: var(--bg3);
+        color: var(--tp);
+        outline: none;
+        font-family: var(--font);
+      }
+      .locked-pin-input:focus { border-color: var(--accent); }
+    </style>
+    <script>
+      /**
+       * PATCH SCRIPT v2 — Runs after main.js loads
+       * Fixes: duplicate listeners, lock chat, export, forward modal
+       */
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+
+          // ── Fix: Forward modal close ────────────────────────────────────────
+          var closeFwd = document.getElementById('closeFwdModal');
+          var fwdOverlay = document.getElementById('forwardModalOverlay');
+          if (closeFwd && fwdOverlay) {
+            closeFwd.onclick = function() { fwdOverlay.style.display = 'none'; };
+          }
+          if (fwdOverlay) {
+            fwdOverlay.addEventListener('click', function(e) {
+              if (e.target === fwdOverlay) fwdOverlay.style.display = 'none';
+            });
+          }
+
+          // ── Fix: Ensure recCancelBtn and recSendBtn work ─────────────────────
+          var recCancel = document.getElementById('recCancelBtn');
+          var recSend = document.getElementById('recSendBtn');
+          if (recCancel) {
+            recCancel.onclick = function() {
+              if (typeof stopVoiceRecording === 'function') stopVoiceRecording(false);
+            };
+          }
+          if (recSend) {
+            recSend.onclick = function() {
+              if (typeof stopVoiceRecording === 'function') stopVoiceRecording(true);
+            };
+          }
+
+          // ── Fix: replyPreviewClose ────────────────────────────────────────────
+          var rpc = document.getElementById('replyPreviewClose');
+          if (rpc) {
+            rpc.onclick = function() {
+              if (typeof clearReplyTo === 'function') clearReplyTo();
+            };
+          }
+
+          console.log('✅ Patch script v2 applied');
+        }, 1500);
+      });
+      </script>
     <!-- ── Settings panel ── -->
     <div class="sidebar-panel" id="panelSettings">
       <div class="settings-list">
