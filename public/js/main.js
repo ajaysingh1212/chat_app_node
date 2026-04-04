@@ -702,16 +702,49 @@ function initSocket(){
     if(incomingCallScreen.style.display==='flex'){pendingOffers[from]=offer;return;}
     processOffer(from,offer);
   });
-  socket.on('answer',async({from,answer})=>{
-    const pc=peerConnections[from];if(!pc||pc.signalingState!=='have-local-offer')return;
-    await pc.setRemoteDescription(new RTCSessionDescription(answer));await flushIce(from);
-  });
-  socket.on('icecandidate',async({from,candidate})=>{
-    if(!candidate||!from)return;
-    const pc=peerConnections[from];
-    if(!pc?.remoteDescription?.type){if(!iceCandidateQueue[from])iceCandidateQueue[from]=[];iceCandidateQueue[from].push(candidate);return;}
-    try{await pc.addIceCandidate(new RTCIceCandidate(candidate));}catch{}
-  });
+socket.on('answer', async ({ from, answer }) => {
+  const pc = peerConnections[from];
+  if (!pc) return;
+
+  await pc.setRemoteDescription(new RTCSessionDescription(answer));
+
+  console.log("✅ Answer set → flushing ICE");
+
+  if (iceCandidateQueue[from]) {
+    for (const c of iceCandidateQueue[from]) {
+      await pc.addIceCandidate(new RTCIceCandidate(c));
+    }
+    iceCandidateQueue[from] = [];
+  }
+});
+socket.on('icecandidate', async ({ from, candidate }) => {
+  console.log("📥 ICE received from:", from);
+
+  if (!candidate) return;
+
+  const pc = peerConnections[from];
+
+  if (!pc) {
+    console.warn("PC not found → queue ICE");
+    if (!iceCandidateQueue[from]) iceCandidateQueue[from] = [];
+    iceCandidateQueue[from].push(candidate);
+    return;
+  }
+
+  if (!pc.remoteDescription) {
+    console.warn("Remote desc not set → queue ICE");
+    if (!iceCandidateQueue[from]) iceCandidateQueue[from] = [];
+    iceCandidateQueue[from].push(candidate);
+    return;
+  }
+
+  try {
+    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    console.log("✅ ICE added");
+  } catch (err) {
+    console.error("❌ ICE error:", err);
+  }
+});
   socket.on('peer-toggle-media',({from,kind,enabled})=>{
     if(kind==='audio'){const el=$(`mute-ind-${from}`);if(el)el.style.display=enabled?'none':'flex';}
   });
@@ -2758,23 +2791,82 @@ function createPeerConnection(remoteUser) {
     }
   };
 
-  // ✅ ICE connection debug (VERY IMPORTANT)
-  pc.oniceconnectionstatechange = () => {
-    console.log("ICE State:", pc.iceConnectionState);
+// ✅ ICE connection debug (UPGRADED)
+pc.oniceconnectionstatechange = () => {
+  console.log("🧊 ICE State:", pc.iceConnectionState);
 
-    if (pc.iceConnectionState === 'failed') {
-      console.error("❌ ICE FAILED → TURN required");
-    }
-  };
+  switch (pc.iceConnectionState) {
+    case "checking":
+      console.log("⏳ ICE checking...");
+      break;
 
-  // ✅ Connection state
-  pc.onconnectionstatechange = () => {
-    console.log("Connection State:", pc.connectionState);
+    case "connected":
+      console.log("✅ ICE connected (media should flow)");
+      break;
 
-    if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
+    case "completed":
+      console.log("🚀 ICE completed");
+      break;
+
+    case "failed":
+      console.error("❌ ICE FAILED → retrying with restartIce()");
+
+      // 🔥 AUTO RECOVERY (IMPORTANT)
+      try {
+        pc.restartIce();
+      } catch (e) {
+        console.error("ICE restart error:", e);
+      }
+      break;
+
+    case "disconnected":
+      console.warn("⚠️ ICE disconnected (network issue)");
+      break;
+
+    case "closed":
+      console.log("🔴 ICE closed");
+      break;
+  }
+};
+
+
+
+// ✅ Connection state (UPGRADED)
+pc.onconnectionstatechange = () => {
+  console.log("🔗 Connection State:", pc.connectionState);
+
+  switch (pc.connectionState) {
+    case "connecting":
+      console.log("⏳ Connecting...");
+      break;
+
+    case "connected":
+      console.log("✅ Peer connected successfully");
+      break;
+
+    case "disconnected":
+      console.warn("⚠️ Peer disconnected");
+
+      // ⏱️ Give some time before cleanup (network fluctuation)
+      setTimeout(() => {
+        if (pc.connectionState === "disconnected") {
+          console.log("🧹 Cleaning up peer:", remoteUser);
+          cleanupPeer(remoteUser);
+        }
+      }, 3000);
+      break;
+
+    case "failed":
+      console.error("❌ Connection failed → forcing cleanup");
       cleanupPeer(remoteUser);
-    }
-  };
+      break;
+
+    case "closed":
+      console.log("🔴 Connection closed");
+      cleanupPeer(remoteUser);
+      break;
+  }
+};
 
   // ✅ Fix: Handle ICE candidates queue (VERY IMPORTANT)
   pc.onicegatheringstatechange = () => {
@@ -2796,12 +2888,24 @@ async function sendOfferTo(user){
   const offer=await pc.createOffer({offerToReceiveAudio:true,offerToReceiveVideo:currentCallType==='video'});
   await pc.setLocalDescription(offer);socket.emit('offer',{to:user,offer:pc.localDescription});
 }
-async function processOffer(from,offer){
-  let pc=peerConnections[from];if(pc&&pc.signalingState!=='stable'){pc.close();delete peerConnections[from];}
-  pc=createPeerConnection(from);
-  await pc.setRemoteDescription(new RTCSessionDescription(offer));await flushIce(from);
-  const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
-  socket.emit('answer',{to:from,answer:pc.localDescription});
+async function processOffer(from, offer) {
+  const pc = createPeerConnection(from);
+
+  await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+  console.log("✅ Offer received → flushing ICE");
+
+  if (iceCandidateQueue[from]) {
+    for (const c of iceCandidateQueue[from]) {
+      await pc.addIceCandidate(new RTCIceCandidate(c));
+    }
+    iceCandidateQueue[from] = [];
+  }
+
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+
+  socket.emit('answer', { to: from, answer });
 }
 function addRemoteVideo(username,stream){
   let wrapper=$(`remote-${username}`);
