@@ -2707,23 +2707,83 @@ closeAddToCallModal?.addEventListener('click',()=>{addToCallModal.style.display=
 /* ════════════════════════════════════════════════════════════════════════════
    WebRTC
 ════════════════════════════════════════════════════════════════════════════ */
-function createPeerConnection(remoteUser){
-  if(peerConnections[remoteUser])return peerConnections[remoteUser];
-  const pc=new RTCPeerConnection({iceServers:[
-    {urls:'stun:stun.l.google.com:19302'},
-    {urls:'stun:stun1.l.google.com:19302'},
-    {urls:'stun:stun2.l.google.com:19302'}
-  ]});
-  if(localStream)localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
-  pc.ontrack=e=>{
-    if(e.streams&&e.streams[0]){
-      addRemoteVideo(remoteUser,e.streams[0]);
-      if(isCallMinimized){miniRemoteVideo.srcObject=e.streams[0];miniPipAvatar.style.display='none';}
+function createPeerConnection(remoteUser) {
+  if (peerConnections[remoteUser]) return peerConnections[remoteUser];
+
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      // ✅ STUN (ok)
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+
+      // 🔥 IMPORTANT: TURN server (ADD THIS)
+      {
+        urls: 'turn:relay1.expressturn.com:3478', // demo TURN (replace later)
+        username: 'ef6YQJ2F2K2W6V6F',
+        credential: '7Jqv8W3v'
+      }
+    ]
+  });
+
+  // ✅ Add local tracks
+  if (localStream) {
+    localStream.getTracks().forEach(track => {
+      pc.addTrack(track, localStream);
+    });
+  }
+
+  // ✅ Remote stream receive
+  pc.ontrack = (e) => {
+    console.log("🎥 Remote track received from:", remoteUser);
+
+    if (e.streams && e.streams[0]) {
+      addRemoteVideo(remoteUser, e.streams[0]);
+
+      if (isCallMinimized) {
+        miniRemoteVideo.srcObject = e.streams[0];
+        miniPipAvatar.style.display = 'none';
+      }
     }
   };
-  pc.onicecandidate=e=>{if(e.candidate)socket.emit('icecandidate',{to:remoteUser,candidate:e.candidate});};
-  pc.onconnectionstatechange=()=>{if(['disconnected','failed','closed'].includes(pc.connectionState))cleanupPeer(remoteUser);};
-  peerConnections[remoteUser]=pc;iceCandidateQueue[remoteUser]=[];
+
+  // ✅ ICE candidate send
+  pc.onicecandidate = (e) => {
+    if (e.candidate) {
+      console.log("❄️ ICE candidate sending...");
+      socket.emit('icecandidate', {
+        to: remoteUser,
+        candidate: e.candidate
+      });
+    }
+  };
+
+  // ✅ ICE connection debug (VERY IMPORTANT)
+  pc.oniceconnectionstatechange = () => {
+    console.log("ICE State:", pc.iceConnectionState);
+
+    if (pc.iceConnectionState === 'failed') {
+      console.error("❌ ICE FAILED → TURN required");
+    }
+  };
+
+  // ✅ Connection state
+  pc.onconnectionstatechange = () => {
+    console.log("Connection State:", pc.connectionState);
+
+    if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
+      cleanupPeer(remoteUser);
+    }
+  };
+
+  // ✅ Fix: Handle ICE candidates queue (VERY IMPORTANT)
+  pc.onicegatheringstatechange = () => {
+    console.log("ICE Gathering:", pc.iceGatheringState);
+  };
+
+  peerConnections[remoteUser] = pc;
+  iceCandidateQueue[remoteUser] = [];
+
   return pc;
 }
 async function flushIce(user){
