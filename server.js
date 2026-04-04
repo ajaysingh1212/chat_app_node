@@ -907,8 +907,10 @@ app.get('/api/status', requireAuth, async (req, res) => {
         AND (sp.user_id=? OR sp.user_id IN (SELECT contact_id FROM contacts WHERE user_id=?))
         AND sp.user_id NOT IN (SELECT blocked_id FROM blocked_users WHERE user_id=?)
         AND sp.user_id NOT IN (SELECT user_id FROM blocked_users WHERE blocked_id=?)
-      ORDER BY sp.user_id=? DESC, sp.created_at DESC
-    `, [me, me, me, me, me]);
+      ORDER BY 
+  CASE WHEN sp.user_id = ? THEN 1 ELSE 0 END DESC,
+  sp.created_at DESC
+    `, [me, me, me, me, me, me]); // ✅ fixed param count
 
     const userMap = {};
     posts.forEach(p => {
@@ -924,8 +926,12 @@ app.get('/api/status', requireAuth, async (req, res) => {
       }
       userMap[p.user_id].statuses.push(p);
     });
+
     res.json(Object.values(userMap));
-  } catch(e) { console.error('status:', e); res.status(500).json({ error: 'Server error' }); }
+  } catch (e) {
+    console.error('status:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 app.post('/api/status', requireAuth, async (req, res) => {
