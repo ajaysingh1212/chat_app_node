@@ -2741,136 +2741,80 @@ closeAddToCallModal?.addEventListener('click',()=>{addToCallModal.style.display=
    WebRTC
 ════════════════════════════════════════════════════════════════════════════ */
 function createPeerConnection(remoteUser) {
-  if (peerConnections[remoteUser]) return peerConnections[remoteUser];
+  console.log("🔥 createPeerConnection:", remoteUser);
+
+  // 🧹 old connection cleanup (IMPORTANT)
+  if (peerConnections[remoteUser]) {
+    console.log("🧹 Closing old peer:", remoteUser);
+    peerConnections[remoteUser].close();
+    delete peerConnections[remoteUser];
+  }
 
   const pc = new RTCPeerConnection({
     iceServers: [
-      // ✅ STUN (ok)
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
+      // ✅ STUN servers
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
 
-      // 🔥 IMPORTANT: TURN server (ADD THIS)
+      // 🔥 YOUR OWN TURN SERVER (FINAL FIX)
       {
-        urls: 'turn:relay1.expressturn.com:3478', // demo TURN (replace later)
-        username: 'ef6YQJ2F2K2W6V6F',
-        credential: '7Jqv8W3v'
+        urls: [
+          "turn:89.116.122.179:3478?transport=udp",
+          "turn:89.116.122.179:3478?transport=tcp",
+          "turns:89.116.122.179:5349?transport=tcp"
+        ],
+        username: "chatapp",
+        credential: "ChatApp@2024#Secure"
       }
-    ]
+    ],
+    iceTransportPolicy: "all"
   });
 
-  // ✅ Add local tracks
+  // ✅ Add local stream
   if (localStream) {
     localStream.getTracks().forEach(track => {
       pc.addTrack(track, localStream);
     });
   }
 
-  // ✅ Remote stream receive
+  // ✅ Receive remote stream
   pc.ontrack = (e) => {
-    console.log("🎥 Remote track received from:", remoteUser);
+    console.log("🎥 TRACK RECEIVED:", remoteUser, e.streams);
 
     if (e.streams && e.streams[0]) {
       addRemoteVideo(remoteUser, e.streams[0]);
 
       if (isCallMinimized) {
         miniRemoteVideo.srcObject = e.streams[0];
-        miniPipAvatar.style.display = 'none';
+        miniPipAvatar.style.display = "none";
       }
     }
   };
 
-  // ✅ ICE candidate send
+  // ✅ ICE send
   pc.onicecandidate = (e) => {
     if (e.candidate) {
-      console.log("❄️ ICE candidate sending...");
-      socket.emit('icecandidate', {
+      console.log("📤 Sending ICE...");
+      socket.emit("icecandidate", {
         to: remoteUser,
         candidate: e.candidate
       });
     }
   };
 
-// ✅ ICE connection debug (UPGRADED)
-pc.oniceconnectionstatechange = () => {
-  console.log("🧊 ICE State:", pc.iceConnectionState);
+  // ✅ ICE state debug
+  pc.oniceconnectionstatechange = () => {
+    console.log("🧊 ICE State:", pc.iceConnectionState);
+  };
 
-  switch (pc.iceConnectionState) {
-    case "checking":
-      console.log("⏳ ICE checking...");
-      break;
+  // ✅ Connection state debug
+  pc.onconnectionstatechange = () => {
+    console.log("🔗 Connection State:", pc.connectionState);
 
-    case "connected":
-      console.log("✅ ICE connected (media should flow)");
-      break;
-
-    case "completed":
-      console.log("🚀 ICE completed");
-      break;
-
-    case "failed":
-      console.error("❌ ICE FAILED → retrying with restartIce()");
-
-      // 🔥 AUTO RECOVERY (IMPORTANT)
-      try {
-        pc.restartIce();
-      } catch (e) {
-        console.error("ICE restart error:", e);
-      }
-      break;
-
-    case "disconnected":
-      console.warn("⚠️ ICE disconnected (network issue)");
-      break;
-
-    case "closed":
-      console.log("🔴 ICE closed");
-      break;
-  }
-};
-
-
-
-// ✅ Connection state (UPGRADED)
-pc.onconnectionstatechange = () => {
-  console.log("🔗 Connection State:", pc.connectionState);
-
-  switch (pc.connectionState) {
-    case "connecting":
-      console.log("⏳ Connecting...");
-      break;
-
-    case "connected":
-      console.log("✅ Peer connected successfully");
-      break;
-
-    case "disconnected":
-      console.warn("⚠️ Peer disconnected");
-
-      // ⏱️ Give some time before cleanup (network fluctuation)
-      setTimeout(() => {
-        if (pc.connectionState === "disconnected") {
-          console.log("🧹 Cleaning up peer:", remoteUser);
-          cleanupPeer(remoteUser);
-        }
-      }, 3000);
-      break;
-
-    case "failed":
-      console.error("❌ Connection failed → forcing cleanup");
+    if (["failed", "closed"].includes(pc.connectionState)) {
+      console.log("❌ Cleaning peer:", remoteUser);
       cleanupPeer(remoteUser);
-      break;
-
-    case "closed":
-      console.log("🔴 Connection closed");
-      cleanupPeer(remoteUser);
-      break;
-  }
-};
-
-  // ✅ Fix: Handle ICE candidates queue (VERY IMPORTANT)
-  pc.onicegatheringstatechange = () => {
-    console.log("ICE Gathering:", pc.iceGatheringState);
+    }
   };
 
   peerConnections[remoteUser] = pc;
