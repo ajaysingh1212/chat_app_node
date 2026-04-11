@@ -155,7 +155,7 @@
   .recording-bar{flex-shrink:0}
 }
 /* ── Mini Call PiP with local video ─── */
-.mini-call-pip{position:fixed;bottom:90px;right:18px;z-index:900;width:160px;
+.mini-call-pip{position:fixed;bottom:90px;right:18px;z-index:900;width:360px;
   background:#0d1a2a;border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.7);
   cursor:move;border:1px solid #223045}
 .mini-pip-remote{width:100%;height:120px;background:#000;position:relative}
@@ -379,6 +379,26 @@ function updateMsgStatus(msgId,status){
 }
 function ticksHTML(s){if(s==='sent')return'✓';if(s==='delivered'||s==='seen')return'✓✓';return'';}
 const activeChatKey=()=>activeChat?chatKey(activeChat.type,activeChat.id):null;
+const DEFAULT_ICE_SERVERS=[
+  {urls:'stun:stun.l.google.com:19302'},
+  {urls:'stun:stun1.l.google.com:19302'},
+  {urls:'stun:stun2.l.google.com:19302'}
+];
+let rtcIceServers=[...DEFAULT_ICE_SERVERS],iceServersPromise=null,iceServersLoaded=false;
+async function ensureIceServersLoaded(){
+  if(iceServersLoaded)return rtcIceServers;
+  if(!iceServersPromise){
+    iceServersPromise=(async()=>{
+      try{
+        const d=await api('GET','/api/ice-servers');
+        if(Array.isArray(d.iceServers)&&d.iceServers.length)rtcIceServers=d.iceServers;
+      }catch(e){console.warn('Using fallback ICE servers:',e.message);}
+      iceServersLoaded=true;
+      return rtcIceServers;
+    })();
+  }
+  return iceServersPromise;
+}
 
 /* ════════════════════════════════════════════════════════════════════════════
    AUTH
@@ -424,6 +444,7 @@ function onAuthSuccess(token,user){
   if(myStatusAvatar)setAvatarEl(myStatusAvatar,user);
   injectInputBarExtras();
   initSocket();
+  ensureIceServersLoaded();
   loadInitialData();
 }
 window.addEventListener('load',()=>{
@@ -702,49 +723,16 @@ function initSocket(){
     if(incomingCallScreen.style.display==='flex'){pendingOffers[from]=offer;return;}
     processOffer(from,offer);
   });
-socket.on('answer', async ({ from, answer }) => {
-  const pc = peerConnections[from];
-  if (!pc) return;
-
-  await pc.setRemoteDescription(new RTCSessionDescription(answer));
-
-  console.log("✅ Answer set → flushing ICE");
-
-  if (iceCandidateQueue[from]) {
-    for (const c of iceCandidateQueue[from]) {
-      await pc.addIceCandidate(new RTCIceCandidate(c));
-    }
-    iceCandidateQueue[from] = [];
-  }
-});
-socket.on('icecandidate', async ({ from, candidate }) => {
-  console.log("📥 ICE received from:", from);
-
-  if (!candidate) return;
-
-  const pc = peerConnections[from];
-
-  if (!pc) {
-    console.warn("PC not found → queue ICE");
-    if (!iceCandidateQueue[from]) iceCandidateQueue[from] = [];
-    iceCandidateQueue[from].push(candidate);
-    return;
-  }
-
-  if (!pc.remoteDescription) {
-    console.warn("Remote desc not set → queue ICE");
-    if (!iceCandidateQueue[from]) iceCandidateQueue[from] = [];
-    iceCandidateQueue[from].push(candidate);
-    return;
-  }
-
-  try {
-    await pc.addIceCandidate(new RTCIceCandidate(candidate));
-    console.log("✅ ICE added");
-  } catch (err) {
-    console.error("❌ ICE error:", err);
-  }
-});
+  socket.on('answer',async({from,answer})=>{
+    const pc=peerConnections[from];if(!pc||pc.signalingState!=='have-local-offer')return;
+    await pc.setRemoteDescription(new RTCSessionDescription(answer));await flushIce(from);
+  });
+  socket.on('icecandidate',async({from,candidate})=>{
+    if(!candidate||!from)return;
+    const pc=peerConnections[from];
+    if(!pc?.remoteDescription?.type){if(!iceCandidateQueue[from])iceCandidateQueue[from]=[];iceCandidateQueue[from].push(candidate);return;}
+    try{await pc.addIceCandidate(new RTCIceCandidate(candidate));}catch{}
+  });
   socket.on('peer-toggle-media',({from,kind,enabled})=>{
     if(kind==='audio'){const el=$(`mute-ind-${from}`);if(el)el.style.display=enabled?'none':'flex';}
   });
@@ -755,76 +743,6 @@ socket.on('icecandidate', async ({ from, candidate }) => {
     if(!currentCallPeers.includes(from))currentCallPeers.push(from);
     await sendOfferTo(from);
   });
-  // ── BLOCK: jab koi hamein block kare — realtime UI update ──────────────────
-socket.on('you-were-blocked', ({ by, byId, hideAvatar, hideOnline, hideStatus }) => {
-  // Us user ke avatar ko hide karo hamari view mein
-  if (allUsersMap[by]) {
-    allUsersMap[by].avatarUrl = null;
-    allUsersMap[by].profile_pic = null;
-    allUsersMap[by].avatar_url = null;
-    if (hideOnline) allUsersMap[by].is_online = 0;
-  }
-  if (contacts[by]) {
-    contacts[by].avatarUrl = null;
-    contacts[by].profile_pic = null;
-    contacts[by].avatar_url = null;
-    if (hideOnline) contacts[by].is_online = 0;
-  }
-  // Agar chat open hai us user ke saath
-  if (activeChat?.type === 'private' && activeChat.id === by) {
-    chatHeaderStatus.textContent = 'unavailable';
-    chatHeaderStatus.style.color = 'var(--ts)';
-    setAvatarEl(chatHeaderAvatar, { username: by }); // default initial
-    // Input bar disable karo
-    messageInput.disabled = true;
-    messageInput.placeholder = 'You cannot message this user';
-    sendBtn.disabled = true;
-    attachBtn.disabled = true;
-    const vrb = $('voiceRecordBtn');
-    if (vrb) vrb.disabled = true;
-  }
-  renderChatList();
-  showToast(`${by} has blocked you`);
-});
-
-socket.on('you-were-unblocked', ({ by, byId }) => {
-  // Re-enable chat if open
-  if (activeChat?.type === 'private' && activeChat.id === by) {
-    messageInput.disabled = false;
-    messageInput.placeholder = 'Type a message';
-    sendBtn.disabled = false;
-    attachBtn.disabled = false;
-    const vrb = $('voiceRecordBtn');
-    if (vrb) vrb.disabled = false;
-    // Reload chat to get fresh data
-    openChat(activeChat);
-  }
-});
-
-// ── BLOCK: jab ham kisi ko block karein — socket emit ─────────────────────
-socket.on('block-action', ({ blockedUsername, blockedId, action }) => {
-  if (action === 'blocked') {
-    // Blocked user ke saath active chat mein input disable
-    if (activeChat?.type === 'private' && activeChat.id === blockedUsername) {
-      messageInput.disabled = true;
-      messageInput.placeholder = 'You have blocked this user';
-      sendBtn.disabled = false; // blocked user ko send allow hoga (already server blocks)
-    }
-    showToast(`${blockedUsername} blocked`);
-  } else {
-    if (activeChat?.type === 'private' && activeChat.id === blockedUsername) {
-      messageInput.disabled = false;
-      messageInput.placeholder = 'Type a message';
-    }
-    showToast(`${blockedUsername} unblocked`);
-  }
-});
-
-// ── CALL BLOCKED ─────────────────────────────────────────────────────────
-socket.on('call-blocked', ({ to }) => {
-  hideOutgoingRing();
-  showToast(`Cannot call ${to}`);
-});
 }
 
 /* ── Resume held call after new call ends ─── */
@@ -963,78 +881,32 @@ async function openChat({type,id,name,isGroup}){
   if(chats[key])chats[key].unread=0;
   showMain();closeProfilePanel();
   const settings=await getChatSettings(key);
-  
-  // FIXED: Lock check
+  // FIXED: Check DB is_locked, but also check our session unlock store
   if(settings.is_locked && !lockedChats[key]){
     showLockedScreen(key,settings);
     return;
   }
-  
-  // Block check for private chats
-  if(type === 'private' && !isGroup){
-    const u = allUsersMap[id] || contacts[id];
-    if(u?.id) {
-      try {
-        const bs = await api('GET', `/api/block/check/${u.id}`);
-        activeChat.blockStatus = bs;
-      } catch(e) { activeChat.blockStatus = null; }
-    }
-  }
-  
   showChatUI(type,id,name,isGroup,key,settings);
 }
 
-function showLockedScreen(key, settings){
-  chatEmptyState.style.display = 'none';
-  lockedChatScreen.style.display = 'flex';
-  chatHeader.style.display = 'none';
-  messagesArea.style.display = 'none';
-  inputBar.style.display = 'none';
-  const rBar = $('replyPreviewBar');
-  if(rBar) rBar.style.display = 'none';
-  const recBar = $('recordingBar');
-  if(recBar) recBar.style.display = 'none';
-  
-  lockedChatPinError.textContent = '';
-  lockedChatPinInput.value = '';
-  lockedChatPinInput.focus();
-  
-  // Enter key support
-  const onEnter = (e) => {
-    if(e.key === 'Enter') lockedChatUnlockBtn.click();
-  };
-  lockedChatPinInput.removeEventListener('keydown', onEnter);
-  lockedChatPinInput.addEventListener('keydown', onEnter);
-  
-  lockedChatUnlockBtn.onclick = async () => {
-    const pin = lockedChatPinInput.value.trim();
-    if(!pin) { lockedChatPinError.textContent = 'Enter your PIN'; return; }
-    lockedChatUnlockBtn.textContent = 'Verifying...';
-    lockedChatUnlockBtn.disabled = true;
-    try {
-      const r = await api('POST',
-        `/api/chat-settings/${encodeURIComponent(key)}/verify-pin`,
-        { pin }
-      );
+function showLockedScreen(key,settings){
+  chatEmptyState.style.display='none';lockedChatScreen.style.display='flex';
+  chatHeader.style.display='none';messagesArea.style.display='none';inputBar.style.display='none';
+  const rBar=$('replyPreviewBar');if(rBar)rBar.style.display='none';
+  const recBar=$('recordingBar');if(recBar)recBar.style.display='none';
+  lockedChatPinError.textContent='';lockedChatPinInput.value='';
+  lockedChatUnlockBtn.onclick=async()=>{
+    const pin=lockedChatPinInput.value;
+    try{
+      const r=await api('POST',`/api/chat-settings/${encodeURIComponent(key)}/verify-pin`,{pin});
       if(r.valid){
-        lockedChats[key] = true;
-        saveUnlockedChats();
-        lockedChatScreen.style.display = 'none';
-        if(activeChat) {
-          const s = await getChatSettings(key);
-          showChatUI(activeChat.type, activeChat.id, activeChat.name, activeChat.isGroup, key, s);
-        }
-      } else {
-        lockedChatPinError.textContent = '❌ Incorrect PIN. Try again.';
-        lockedChatPinInput.value = '';
-        lockedChatPinInput.focus();
+        lockedChats[key]=true;
+        saveUnlockedChats(); // FIXED: persist unlock in sessionStorage
+        lockedChatScreen.style.display='none';
+        if(activeChat)showChatUI(activeChat.type,activeChat.id,activeChat.name,activeChat.isGroup,key,settings||{});
       }
-    } catch(e) {
-      lockedChatPinError.textContent = 'Error: ' + e.message;
-    } finally {
-      lockedChatUnlockBtn.textContent = 'Unlock';
-      lockedChatUnlockBtn.disabled = false;
-    }
+      else lockedChatPinError.textContent='Incorrect PIN';
+    }catch{lockedChatPinError.textContent='Error verifying PIN';}
   };
 }
 
@@ -1073,35 +945,6 @@ async function showChatUI(type,id,name,isGroup,key,settings){
   renderMessages(key);
   renderChatList(searchInput?.value?.trim()?.toLowerCase()||'');
   messageInput.focus();
-
-  // Block status apply karo
-  const bs = activeChat?.blockStatus;
-  if(bs && !isGroup) {
-    if(bs.iBlockedThem) {
-      messageInput.disabled = false;
-      messageInput.placeholder = 'You have blocked this user';
-      // Note: server already blocks actual delivery
-    } else if(bs.theyBlockedMe) {
-      messageInput.disabled = true;
-      messageInput.placeholder = 'You cannot message this user';
-      sendBtn.disabled = true;
-      const vrb = $('voiceRecordBtn');
-      if(vrb) vrb.disabled = true;
-    } else {
-      messageInput.disabled = false;
-      messageInput.placeholder = 'Type a message';
-      sendBtn.disabled = false;
-      const vrb = $('voiceRecordBtn');
-      if(vrb) vrb.disabled = false;
-    }
-  } else if(!isGroup) {
-    // Reset to normal
-    messageInput.disabled = false;
-    messageInput.placeholder = 'Type a message';
-    sendBtn.disabled = false;
-    const vrb = $('voiceRecordBtn');
-    if(vrb) vrb.disabled = false;
-  }
 
   // FIXED: Mark all unread messages as seen when opening chat
   if(!isGroup && u?.id){
@@ -1399,7 +1242,6 @@ function setReplyTo(msg){
   $('replyPreviewText').textContent=msg.content||(msg.fileName?`📎 ${msg.fileName}`:'Media');
   messageInput.focus();
 }
-
 function clearReplyTo(){
   replyToMsg=null;
   const bar=$('replyPreviewBar');if(bar)bar.style.display='none';
@@ -1859,38 +1701,11 @@ async function loadPipMedia(userId){
 }
 
 pipBlockBtn?.addEventListener('click',async()=>{
-  const uid = pipBlockBtn.dataset.uid;
-  const blocked = pipBlockBtn.dataset.blocked === '1';
-  const targetUsername = activePipUser; // active pip user name
+  const uid=pipBlockBtn.dataset.uid,blocked=pipBlockBtn.dataset.blocked==='1';
   try{
-    if(blocked){
-      await api('DELETE',`/api/block/${uid}`);
-      pipBlockLabel.textContent = 'Block';
-      pipBlockBtn.dataset.blocked = '0';
-      // Socket emit for realtime
-      if(socket && targetUsername) {
-        socket.emit('unblock-user', { unblockedUsername: targetUsername });
-      }
-    } else {
-      await api('POST',`/api/block/${uid}`);
-      pipBlockLabel.textContent = 'Unblock';
-      pipBlockBtn.dataset.blocked = '1';
-      // Socket emit for realtime
-      if(socket && targetUsername) {
-        socket.emit('block-user', { blockedUsername: targetUsername });
-        // Blocked user ka avatar hide karo hamari side se bhi
-        if(allUsersMap[targetUsername]) {
-          allUsersMap[targetUsername].avatarUrl = null;
-          allUsersMap[targetUsername].profile_pic = null;
-        }
-        if(contacts[targetUsername]) {
-          contacts[targetUsername].avatarUrl = null;
-          contacts[targetUsername].profile_pic = null;
-        }
-        renderChatList();
-      }
-    }
-  } catch(e){ showToast(e.message); }
+    if(blocked){await api('DELETE',`/api/block/${uid}`);pipBlockLabel.textContent='Block';pipBlockBtn.dataset.blocked='0';showToast('Unblocked');}
+    else{await api('POST',`/api/block/${uid}`);pipBlockLabel.textContent='Unblock';pipBlockBtn.dataset.blocked='1';showToast('Blocked');}
+  }catch(e){showToast(e.message);}
 });
 
 pipShareContactBtn?.addEventListener('click',()=>{
@@ -1919,59 +1734,36 @@ pipThemeRow?.querySelectorAll('.theme-swatch').forEach(s=>{
   });
 });
 
-// FIXED: Lock toggle
-pipLockToggle?.addEventListener('change', () => {
-  if(pipLockPinWrap) {
-    pipLockPinWrap.style.display = pipLockToggle.checked ? 'block' : 'none';
-  }
-  if(!pipLockToggle.checked && pipLockPinInput) {
-    pipLockPinInput.value = '';
-  }
+// FIXED: Lock chat — save to DB, manage sessionStorage correctly
+pipLockToggle?.addEventListener('change',()=>{
+  pipLockPinWrap.style.display=pipLockToggle.checked?'block':'none';
+  // If turning off, clear pin field
+  if(!pipLockToggle.checked)pipLockPinInput.value='';
 });
-
-// FIXED: Save lock settings
-pipSaveLockBtn?.addEventListener('click', async () => {
-  if(!activeChat) return;
-  const key = activeChatKey();
-  const isLocked = pipLockToggle?.checked || false;
-  const pin = pipLockPinInput?.value?.trim() || '';
-  
-  if(isLocked && pin.length < 4) {
-    showToast('Enter at least 4 digit PIN');
-    return;
-  }
-  
-  try {
-    pipSaveLockBtn.textContent = 'Saving...';
-    pipSaveLockBtn.disabled = true;
-    
-    await api('PUT', `/api/chat-settings/${encodeURIComponent(key)}`, {
-      isLocked: isLocked,
-      lockPin: isLocked ? pin : null
+pipSaveLockBtn?.addEventListener('click',async()=>{
+  if(!activeChat)return;
+  const key=activeChatKey(),pin=pipLockPinInput.value;
+  if(pipLockToggle.checked&&pin.length<4){showToast('Enter at least 4 digit PIN');return;}
+  try{
+    await api('PUT',`/api/chat-settings/${encodeURIComponent(key)}`,{
+      isLocked:pipLockToggle.checked,
+      lockPin:pipLockToggle.checked?pin:null
     });
-    
-    if(isLocked) {
-      // Locked kiya — current session mein unlocked rehne do
-      lockedChats[key] = true;
+    if(pipLockToggle.checked){
+      // Just locked — mark as unlocked for current session (don't ask pin right now)
+      lockedChats[key]=true;
       saveUnlockedChats();
-      showToast('🔒 Chat locked! PIN set.');
-    } else {
-      // Unlocked kiya — session se bhi hatao
+      showToast('Chat locked! PIN set.');
+    }else{
+      // Unlocked — remove from DB and from session
       delete lockedChats[key];
       saveUnlockedChats();
-      showToast('🔓 Chat unlocked!');
+      showToast('Chat unlocked!');
     }
-    
-    if(pipLockPinInput) pipLockPinInput.value = '';
-    if(pipLockPinWrap) pipLockPinWrap.style.display = 'none';
-    
-  } catch(e) {
-    showToast(e.message);
-  } finally {
-    pipSaveLockBtn.textContent = 'Save Lock Settings';
-    pipSaveLockBtn.disabled = false;
-  }
+    pipLockPinInput.value='';
+  }catch(e){showToast(e.message);}
 });
+
 // Export chat
 if(pipExportBtn){
   pipExportBtn.addEventListener('click',async e=>{
@@ -2094,165 +1886,9 @@ profileAboutInput?.addEventListener('input',()=>{
 /* ════════════════════════════════════════════════════════════════════════════
    CALL HISTORY
 ════════════════════════════════════════════════════════════════════════════ */
-// ── State for call history ─────────────────────────────────────────────────
-let callHistoryFilter = 'all';
-let callHistoryCustomFrom = '';
-let callHistoryCustomTo = '';
-
-async function loadCallHistory(filter, from, to) {
-  filter = filter || callHistoryFilter || 'all';
-  try {
-    let url = '/api/calls';
-    const params = new URLSearchParams();
-    if(filter && filter !== 'all') params.set('filter', filter);
-    if(filter === 'custom') {
-      if(from) params.set('from', from);
-      if(to) params.set('to', to);
-    }
-    if(params.toString()) url += '?' + params.toString();
-    const calls = await api('GET', url);
-    renderCallHistory(calls);
-  } catch(e) { console.error('call history:', e); }
-}
-
-function renderCallHistory(calls){
-  const container = callHistoryList;
-  
-  // Filter bar HTML
-  const filterBarId = 'callHistoryFilterBar';
-  let filterBar = $(filterBarId);
-  if(!filterBar) {
-    filterBar = document.createElement('div');
-    filterBar.id = filterBarId;
-    filterBar.className = 'call-history-filter-bar';
-    filterBar.innerHTML = `
-      <div class="chf-scroll">
-        <button class="chf-btn active" data-f="all">All</button>
-        <button class="chf-btn" data-f="today">Today</button>
-        <button class="chf-btn" data-f="yesterday">Yesterday</button>
-        <button class="chf-btn" data-f="week">This Week</button>
-        <button class="chf-btn" data-f="month">This Month</button>
-        <button class="chf-btn" data-f="year">This Year</button>
-        <button class="chf-btn" data-f="custom">Custom</button>
-      </div>
-      <div class="chf-custom-wrap" id="chfCustomWrap" style="display:none">
-        <input type="date" id="chfFrom" class="chf-date-input">
-        <span style="color:var(--ts);font-size:12px">to</span>
-        <input type="date" id="chfTo" class="chf-date-input">
-        <button class="chf-search-btn" id="chfSearchBtn">Search</button>
-      </div>
-      <div class="chf-actions">
-        <button class="chf-clear-all" id="chfClearAll" title="Clear all history">🗑 Clear All</button>
-      </div>
-    `;
-    container.parentNode.insertBefore(filterBar, container);
-    
-    // Filter button listeners
-    filterBar.querySelectorAll('.chf-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        filterBar.querySelectorAll('.chf-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        callHistoryFilter = btn.dataset.f;
-        const customWrap = $('chfCustomWrap');
-        if(customWrap) customWrap.style.display = callHistoryFilter === 'custom' ? 'flex' : 'none';
-        if(callHistoryFilter !== 'custom') loadCallHistory(callHistoryFilter);
-      });
-    });
-    
-    // Custom date search
-    $('chfSearchBtn')?.addEventListener('click', () => {
-      const from = $('chfFrom')?.value;
-      const to = $('chfTo')?.value;
-      if(!from || !to) { showToast('Select from and to dates'); return; }
-      loadCallHistory('custom', from, to);
-    });
-    
-    // Clear all
-    $('chfClearAll')?.addEventListener('click', async () => {
-      if(!confirm('Clear all call history? Only cleared for you.')) return;
-      try {
-        await api('DELETE', '/api/calls');
-        renderCallHistory([]);
-        showToast('Call history cleared');
-      } catch(e) { showToast(e.message); }
-    });
-  }
-  
-  container.innerHTML = '';
-  if(!calls.length){
-    container.innerHTML=`<div class="empty-panel-hint">
-      <svg viewBox="0 0 24 24" width="40" height="40" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="currentColor" stroke-width="1.5"/></svg>
-      <p>No calls found</p>
-    </div>`;
-    return;
-  }
-  
-  calls.forEach(c=>{
-    const isMe = c.caller_id === myUser.id;
-    const otherName = isMe ? (c.callee_name || c.group_name || '?') : (c.caller_name || '?');
-    const otherColor = isMe ? (c.callee_color || '#00A884') : (c.caller_color || '#00A884');
-    const otherPic = isMe ? (c.callee_pic || null) : (c.caller_pic || null);
-    
-    let direction, dirClass;
-    if(c.status === 'missed') { direction = '↙ Missed'; dirClass = 'ch-icon-miss'; }
-    else if(isMe) { direction = '↗ Outgoing'; dirClass = 'ch-icon-out'; }
-    else { direction = '↙ Incoming'; dirClass = 'ch-icon-in'; }
-    
-    const d = new Date(c.started_at);
-    const dateStr = d.toLocaleDateString([], {day:'2-digit', month:'short', year:'numeric'});
-    const timeStr = d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-    
-    const item = document.createElement('div');
-    item.className = 'call-hist-item';
-    item.dataset.callId = c.id;
-    
-    // Avatar with profile pic support
-    const avHtml = otherPic 
-      ? `<div class="ch-avatar" style="background:${otherColor};overflow:hidden;padding:0"><img src="${otherPic}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"></div>`
-      : `<div class="ch-avatar" style="background:${otherColor}">${getInitial(otherName)}</div>`;
-    
-    item.innerHTML = `
-      ${avHtml}
-      <div class="ch-body">
-        <div class="ch-name">${otherName}</div>
-        <div class="ch-meta">
-          <span class="${dirClass}">${direction}</span>
-          <span>·</span>
-          <span>${c.call_type === 'video' ? '📹' : '📞'}${c.is_group ? ' Group' : ''}</span>
-          ${c.duration_s ? `<span>· ${fmtDuration(c.duration_s)}</span>` : ''}
-        </div>
-      </div>
-      <div class="ch-side">
-        <div class="ch-time">${dateStr}<br><small>${timeStr}</small></div>
-        <button class="ch-delete-btn" data-id="${c.id}" title="Delete this call">🗑</button>
-      </div>
-    `;
-    
-    // Open chat on item click (not on delete btn)
-    item.addEventListener('click', (e) => {
-      if(e.target.closest('.ch-delete-btn')) return;
-      if(!c.is_group && otherName && contacts[otherName]){
-        openChat({type:'private', id:otherName, name:otherName, isGroup:false});
-        switchPanel('chats');
-        if(window.innerWidth <= 768) showMain();
-      }
-    });
-    
-    // Delete button
-    item.querySelector('.ch-delete-btn').addEventListener('click', async (e) => {
-      e.stopPropagation();
-      try {
-        await api('DELETE', `/api/calls/${c.id}`);
-        item.style.opacity = '0';
-        item.style.transform = 'translateX(100%)';
-        item.style.transition = 'all 0.3s ease';
-        setTimeout(() => item.remove(), 300);
-        showToast('Call removed');
-      } catch(err) { showToast(err.message); }
-    });
-    
-    container.appendChild(item);
-  });
+async function loadCallHistory(){
+  try{const calls=await api('GET','/api/calls');renderCallHistory(calls);}
+  catch(e){console.error('call history:',e);}
 }
 function renderCallHistory(calls){
   callHistoryList.innerHTML='';
@@ -2437,13 +2073,69 @@ closeViewersModal?.addEventListener('click',()=>{statusViewersModal.style.displa
 /* ════════════════════════════════════════════════════════════════════════════
    MEDIA  (camera / mic for calls)
 ════════════════════════════════════════════════════════════════════════════ */
-async function startMedia(video=false){
-  if(localStream)return;
-  try{localStream=await navigator.mediaDevices.getUserMedia({audio:true,video});}
-  catch{try{localStream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});}catch{}}
-  if(localVideo&&localStream)localVideo.srcObject=localStream;
-  // FIXED: Also update local PiP video in active call screen
-  updateLocalVideoPip();
+async function startMedia(video = false) {
+  if (localStream) return;
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video });
+  } catch {
+    try { localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false }); } catch {}
+  }
+ 
+  // OLD localVideo element (keep for compatibility but hidden)
+  if (localVideo && localStream) localVideo.srcObject = localStream;
+ 
+  // Create/update our single local PiP
+  createLocalPip();
+}
+// ── Single local PiP creator ─────────────────────────────────────────────
+function createLocalPip() {
+  // Remove any existing
+  document.querySelectorAll('.call-local-pip').forEach(el => el.remove());
+ 
+  if (!localStream || !activeCallScreen) return;
+  if (currentCallType !== 'video') return;
+  const videoTracks = localStream.getVideoTracks();
+  if (!videoTracks.length) return;
+ 
+  const pip = document.createElement('div');
+  pip.className = 'call-local-pip';
+  pip.id = 'callLocalPip';
+  pip.innerHTML = `
+    <video autoplay muted playsinline></video>
+    <div class="call-local-pip-label">You</div>
+    <button class="call-local-pip-flip" id="callLocalFlipBtn" title="Flip camera">
+      <svg viewBox="0 0 24 24" width="14" height="14"><path d="M20 5h-3.17L15 3H9L7.17 5H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-8 13c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" fill="currentColor"/></svg>
+    </button>
+  `;
+ 
+  const vid = pip.querySelector('video');
+  vid.srcObject = localStream;
+  activeCallScreen.appendChild(pip);
+ 
+  // Draggable
+  makeDraggable(pip);
+ 
+  // Flip button
+  pip.querySelector('#callLocalFlipBtn').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    localStream.getVideoTracks().forEach(t => t.stop());
+    try {
+      const ns = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: currentFacingMode } });
+      const nvt = ns.getVideoTracks()[0];
+      localStream.getVideoTracks().forEach(t => localStream.removeTrack(t));
+      localStream.addTrack(nvt);
+      vid.srcObject = localStream;
+      if (localVideo) localVideo.srcObject = localStream;
+      for (const pc of Object.values(peerConnections)) {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) sender.replaceTrack(nvt);
+      }
+      // Update mini pip too
+      const miniLocal = document.querySelector('.mini-pip-local-video video');
+      if (miniLocal) miniLocal.srcObject = localStream;
+    } catch { showToast('Cannot flip camera'); }
+  });
 }
 
 /* ── FIXED: Local video PiP element in active call ─── */
@@ -2493,6 +2185,7 @@ addToCallBtn?.addEventListener('click',openAddToCallModal);
 async function initiateCall(callType,isGroup){
   if(!activeChat)return;
   currentCallType=callType;currentCallRoomId=genId();isGroupCall=isGroup;currentGroupCallId=isGroup?activeChat.id:null;
+  await ensureIceServersLoaded();
   await startMedia(callType==='video');
   showOutgoingRing(activeChat.name,callType);
   socket.emit('call-invite',{to:!isGroup?activeChat.id:undefined,callType,isGroup,groupId:isGroup?activeChat.id:undefined,roomId:currentCallRoomId});
@@ -2511,8 +2204,11 @@ acceptVideoCallBtn?.addEventListener('click',()=>acceptIncomingCall('video'));
 async function acceptIncomingCall(type){
   if(!pendingIncomingCaller)return;
   currentCallType=pendingIncomingCallType||type;
+  currentCallRoomId=pendingIncomingRoomId;
+  isGroupCall=false;currentGroupCallId=null;
   const from=pendingIncomingCaller;
   playRingtone(false);incomingCallScreen.style.display='none';
+  await ensureIceServersLoaded();
   await startMedia(currentCallType==='video');
   socket.emit('call-accepted',{to:from,callType:currentCallType,roomId:pendingIncomingRoomId});
   await showActiveCallScreen(from,currentCallType);
@@ -2565,7 +2261,8 @@ iocHoldAccept?.addEventListener('click',async()=>{
 
   // Reset call state for new call
   currentCallType=newType;currentCallRoomId=newRoomId;
-  currentCallPeers=[];
+  currentCallPeers=[];isGroupCall=false;currentGroupCallId=null;
+  await ensureIceServersLoaded();
   if(!localStream)await startMedia(newType==='video');
   else localStream.getTracks().forEach(t=>t.enabled=true);
 
@@ -2594,7 +2291,9 @@ iocCutAccept?.addEventListener('click',async()=>{
 
 async function acceptBannerCall(){
   if(!pendingIncomingCaller)return;
-  currentCallType=pendingIncomingCallType;const from=pendingIncomingCaller;playRingtone(false);
+  currentCallType=pendingIncomingCallType;currentCallRoomId=pendingIncomingRoomId;isGroupCall=false;currentGroupCallId=null;
+  const from=pendingIncomingCaller;playRingtone(false);
+  await ensureIceServersLoaded();
   if(!localStream)await startMedia(currentCallType==='video');
   else localStream.getTracks().forEach(t=>t.enabled=true);
   socket.emit('call-accepted',{to:from,callType:currentCallType,roomId:pendingIncomingRoomId});
@@ -2605,55 +2304,147 @@ async function acceptBannerCall(){
 
 async function handleGroupCallInvite(from,callType,groupId,roomId){
   currentCallType=callType;currentCallRoomId=roomId;isGroupCall=true;currentGroupCallId=groupId;
+  await ensureIceServersLoaded();
   await startMedia(callType==='video');
   socket.emit('call-accepted',{to:from,callType,roomId});
   await showActiveCallScreen(from,callType);
 }
 
-async function showActiveCallScreen(peerName,callType){
-  currentCallPeers.push(peerName);
-  activeCallScreen.style.display='flex';
-  const u=allUsersMap[peerName]||contacts[peerName];
-  setAvatarEl(audioCallAvatar,u||{username:peerName});
-  audioCallName.textContent=peerName;
-  setAvatarEl(miniPipAvatar,u||{username:peerName});miniPipName.textContent=peerName;
-  if(callType==='video'){
-    callVideoArea.style.display='block';audioCallDisplay.style.display='none';aCallVideoBtn.style.display='flex';
-    // FIXED: Show local video PiP
-    setTimeout(()=>updateLocalVideoPip(),200);
-  }else{
-    callVideoArea.style.display='none';audioCallDisplay.style.display='flex';aCallVideoBtn.style.display='none';
-    const localWrap=$('localVideoWrap');if(localWrap)localWrap.style.display='none';
-  }
-  aCallAddBtn.style.display='flex';addToCallBtn.style.display='flex';
-  startCallTimer();
+async function showActiveCallScreen(peerName, callType) {
+  if(!currentCallPeers.includes(peerName))currentCallPeers.push(peerName);
+  activeCallScreen.style.display = 'flex';
 
-  // FIXED: Mini PiP also update local video
+  const u = allUsersMap[peerName] || contacts[peerName];
+  setAvatarEl(audioCallAvatar, u || { username: peerName });
+  audioCallName.textContent = peerName;
+
+  if (callType === 'video') {
+    callVideoArea.style.display = 'block';
+    audioCallDisplay.style.display = 'none';
+    aCallVideoBtn.style.display = 'flex';
+
+    // Create local PiP after delay
+    setTimeout(() => createLocalPip(), 300);
+  } else {
+    callVideoArea.style.display = 'none';
+    audioCallDisplay.style.display = 'flex';
+    aCallVideoBtn.style.display = 'none';
+  }
+
+  aCallAddBtn.style.display = 'flex';
+  addToCallBtn.style.display = 'flex';
+
+  startCallTimer();
+  buildMiniPip(peerName); // 👈 this was correct
+}
+
+function buildMiniPip(peerName) {
+  if (!miniCallPip) return;
+
+  const u = allUsersMap[peerName] || contacts[peerName];
+  const initial = (peerName || '?')[0].toUpperCase();
+  const avatarColor = getAvatarColor(peerName);
+
+  miniCallPip.innerHTML = `
+    <div class="mini-pip-video-wrap" id="miniPipVideoWrap">
+      <video id="miniRemoteVideo" autoplay playsinline 
+        style="width:100%;height:100%;object-fit:cover;display:block"></video>
+
+      <div class="mini-pip-avatar" id="miniPipAvatar" 
+        style="background:${avatarColor}">
+        ${initial}
+      </div>
+
+      <div class="mini-pip-local-video" id="miniPipLocalBox">
+        <div class="mini-pip-local-video-avatar">👤</div>
+      </div>
+
+      <div class="mini-pip-badges">
+        <div class="mini-pip-live-badge">
+          <span class="mini-pip-live-dot"></span>LIVE
+        </div>
+        <div class="mini-pip-muted-badge" id="miniPipMutedBadge">
+          <svg viewBox="0 0 24 24" width="12" height="12">
+            <path d="M3.27 2L2 3.27l18.73 18.73 1.41-1.41L3.27 2z" fill="#fff"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="mini-pip-video-info">
+        <span class="mini-pip-call-name" id="miniPipName">${peerName}</span>
+        <span class="mini-pip-call-dur" id="miniPipDur">00:00</span>
+      </div>
+    </div>
+
+    <div class="mini-pip-controls-row">
+      <button class="mpip-btn mpip-expand" id="miniPipExpand">Expand</button>
+      <button class="mpip-btn mpip-mute" id="miniPipMuteBtn">Mute</button>
+      <button class="mpip-btn mpip-end" id="miniPipEnd">End</button>
+    </div>
+  `;
+
+  // Expand
+  document.getElementById('miniPipExpand').addEventListener('click', () => {
+    miniCallPip.style.display = 'none';
+    activeCallScreen.style.display = 'flex';
+    isCallMinimized = false;
+    createLocalPip();
+  });
+
+  // Mute
+  const miniMuteBtn = document.getElementById('miniPipMuteBtn');
+  miniMuteBtn.addEventListener('click', () => {
+    isMuted = !isMuted;
+
+    localStream?.getAudioTracks().forEach(t => {
+      t.enabled = !isMuted;
+    });
+
+    aCallMuteBtn.classList.toggle('active', isMuted);
+    miniMuteBtn.classList.toggle('muted', isMuted);
+
+    const badge = document.getElementById('miniPipMutedBadge');
+    if (badge) badge.classList.toggle('show', isMuted);
+
+    currentCallPeers.forEach(u => {
+      socket.emit('toggle-media', {
+        to: u,
+        kind: 'audio',
+        enabled: !isMuted
+      });
+    });
+  });
+
+  // End Call
+  document.getElementById('miniPipEnd')
+    .addEventListener('click', endAllCalls);
+
+  // Drag
+  makeDraggable(miniCallPip);
+
+  // Local video update
   updateMiniPipLocalVideo();
 }
 
 /* ── FIXED: Mini PiP shows local video in corner ─── */
-function updateMiniPipLocalVideo(){
-  if(!miniCallPip)return;
-  let localPip=miniCallPip.querySelector('.mini-pip-local');
-  if(!localPip){
-    const remoteWrap=miniCallPip.querySelector('.mini-pip-remote');
-    if(remoteWrap){
-      localPip=document.createElement('div');localPip.className='mini-pip-local';
-      if(currentCallType==='video'&&localStream?.getVideoTracks().length){
-        const vid=document.createElement('video');vid.autoplay=true;vid.muted=true;vid.playsInline=true;
-        vid.style.cssText='width:100%;height:100%;object-fit:cover;display:block';
-        if(localStream)vid.srcObject=localStream;
-        localPip.appendChild(vid);
-      }else{
-        const av=document.createElement('div');av.className='mini-pip-local-avatar';
-        av.textContent=getInitial(myUser?.username||'?');
-        localPip.appendChild(av);
-      }
-      remoteWrap.appendChild(localPip);
-    }
+function updateMiniPipLocalVideo() {
+  const box = document.getElementById('miniPipLocalBox');
+  if (!box) return;
+  if (localStream && currentCallType === 'video' && localStream.getVideoTracks().length) {
+    box.innerHTML = '';
+    const vid = document.createElement('video');
+    vid.autoplay = true; vid.muted = true; vid.playsInline = true;
+    vid.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(-1)';
+    vid.srcObject = localStream;
+    box.appendChild(vid);
+    box.style.display = 'block';
+  } else {
+    box.innerHTML = `<div class="mini-pip-local-video-avatar">👤</div>`;
+    // Hide for audio call
+    if (currentCallType !== 'video') box.style.display = 'none';
   }
 }
+
 
 activeEndCallBtn?.addEventListener('click',endAllCalls);
 miniPipEnd?.addEventListener('click',endAllCalls);
@@ -2670,34 +2461,54 @@ function endAllCalls(){
   setTimeout(loadCallHistory,600);
 }
 function cleanupCall(){
-  activeCallScreen.style.display='none';miniCallPip.style.display='none';isCallMinimized=false;
-  callVideoArea.style.display='none';audioCallDisplay.style.display='flex';
-  clearInterval(callTimer);callDuration.textContent='00:00';callSeconds=0;
-  currentCallPeers=[];isMuted=isVideoOff=false;
-  aCallMuteBtn.classList.remove('active');aCallVideoBtn.classList.remove('active');
-  aCallAddBtn.style.display='none';addToCallBtn.style.display='none';
-  isGroupCall=false;currentGroupCallId=null;currentCallRoomId=null;
+  activeCallScreen.style.display = 'none';
+  miniCallPip.style.display = 'none';
+  isCallMinimized = false;
+  callVideoArea.style.display = 'none';
+  audioCallDisplay.style.display = 'flex';
+  clearInterval(callTimer);
+  callDuration.textContent = '00:00';
+  callSeconds = 0;
+  currentCallPeers = [];
+  isMuted = isVideoOff = false;
+  aCallMuteBtn.classList.remove('active');
+  aCallVideoBtn.classList.remove('active');
+  aCallAddBtn.style.display = 'none';
+  addToCallBtn.style.display = 'none';
+  isGroupCall = false; currentGroupCallId = null; currentCallRoomId = null;
+  // Remove local pip
+  document.getElementById('callLocalPip')?.remove();
   // Remove hold overlay
-  const holdOv=activeCallScreen?.querySelector('.hold-overlay');if(holdOv)holdOv.remove();
-  isCallOnHold=false;heldCallPeer=null;heldCallType='audio';heldCallRoomId=null;
-  // Remove local video PiP wrap
-  const lw=$('localVideoWrap');if(lw)lw.style.display='none';
-  // Remove local pip from mini
-  miniCallPip?.querySelector('.mini-pip-local')?.remove();
-  if(localStream){localStream.getTracks().forEach(t=>t.stop());localStream=null;}
-  remoteVideosGrid.innerHTML='';
-  if(miniRemoteVideo)miniRemoteVideo.srcObject=null;
+  activeCallScreen?.querySelector('.hold-overlay')?.remove();
+  isCallOnHold = false; heldCallPeer = null;
+  if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+  remoteVideosGrid.innerHTML = '';
 }
 
 /* ── FIXED: Minimize call — show local video in mini PiP corner ─── */
-aCallMinimizeBtn?.addEventListener('click',()=>{
-  activeCallScreen.style.display='none';
-  const fv=remoteVideosGrid.querySelector('video');
-  if(fv){miniRemoteVideo.srcObject=fv.srcObject;miniPipAvatar.style.display='none';}
-  else{miniRemoteVideo.srcObject=null;miniPipAvatar.style.display='flex';}
-  miniCallPip.style.display='flex';
-  isCallMinimized=true;
+aCallMinimizeBtn?.addEventListener('click', () => {
+  activeCallScreen.style.display = 'none';
+  // Remove local pip from fullscreen
+  document.getElementById('callLocalPip')?.remove();
+ 
+  // Set remote video in mini pip
+  const remoteVid = remoteVideosGrid.querySelector('video');
+  const miniRemote = document.getElementById('miniRemoteVideo');
+  const miniAvatar = document.getElementById('miniPipAvatar');
+  if (remoteVid && miniRemote) {
+    miniRemote.srcObject = remoteVid.srcObject;
+    if (miniAvatar) miniAvatar.style.display = 'none';
+    miniRemote.style.display = 'block';
+  } else {
+    if (miniAvatar) miniAvatar.style.display = 'flex';
+    if (miniRemote) miniRemote.style.display = 'none';
+  }
+ 
+  // Update local box in mini pip
   updateMiniPipLocalVideo();
+ 
+  miniCallPip.style.display = 'flex';
+  isCallMinimized = true;
 });
 miniPipExpand?.addEventListener('click',()=>{miniCallPip.style.display='none';activeCallScreen.style.display='flex';isCallMinimized=false;updateLocalVideoPip();});
 miniCallPip?.addEventListener('click',e=>{if(e.target===miniCallPip||e.target.closest('.mini-pip-info'))miniPipExpand.click();});
@@ -2707,7 +2518,8 @@ function startCallTimer(){
   callTimer=setInterval(()=>{
     callSeconds++;
     const m=String(Math.floor(callSeconds/60)).padStart(2,'0'),s=String(callSeconds%60).padStart(2,'0');
-    const str=`${m}:${s}`;callDuration.textContent=str;miniPipDur.textContent=str;
+    const str=`${m}:${s}`;callDuration.textContent=str;
+    const mpd=$('miniPipDur');if(mpd)mpd.textContent=str;
   },1000);
 }
 aCallMuteBtn?.addEventListener('click',()=>{
@@ -2715,12 +2527,13 @@ aCallMuteBtn?.addEventListener('click',()=>{
   aCallMuteBtn.classList.toggle('active',isMuted);
   currentCallPeers.forEach(u=>socket.emit('toggle-media',{to:u,kind:'audio',enabled:!isMuted}));
 });
-aCallVideoBtn?.addEventListener('click',()=>{
-  isVideoOff=!isVideoOff;localStream?.getVideoTracks().forEach(t=>t.enabled=!isVideoOff);
-  aCallVideoBtn.classList.toggle('active',isVideoOff);
-  // Hide/show local PiP
-  const lw=$('localVideoWrap');if(lw)lw.style.display=isVideoOff?'none':'block';
-  currentCallPeers.forEach(u=>socket.emit('toggle-media',{to:u,kind:'video',enabled:!isVideoOff}));
+aCallVideoBtn?.addEventListener('click', () => {
+  isVideoOff = !isVideoOff;
+  localStream?.getVideoTracks().forEach(t => t.enabled = !isVideoOff);
+  aCallVideoBtn.classList.toggle('active', isVideoOff);
+  const pip = document.getElementById('callLocalPip');
+  if (pip) pip.style.display = isVideoOff ? 'none' : 'block';
+  currentCallPeers.forEach(u => socket.emit('toggle-media', { to: u, kind: 'video', enabled: !isVideoOff }));
 });
 aCallAddBtn?.addEventListener('click',openAddToCallModal);
 function openAddToCallModal(){
@@ -2740,86 +2553,19 @@ closeAddToCallModal?.addEventListener('click',()=>{addToCallModal.style.display=
 /* ════════════════════════════════════════════════════════════════════════════
    WebRTC
 ════════════════════════════════════════════════════════════════════════════ */
-function createPeerConnection(remoteUser) {
-  console.log("🔥 createPeerConnection:", remoteUser);
-
-  // 🧹 old connection cleanup (IMPORTANT)
-  if (peerConnections[remoteUser]) {
-    console.log("🧹 Closing old peer:", remoteUser);
-    peerConnections[remoteUser].close();
-    delete peerConnections[remoteUser];
-  }
-
-  const pc = new RTCPeerConnection({
-    iceServers: [
-      // ✅ STUN servers
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-
-      // 🔥 YOUR OWN TURN SERVER (FINAL FIX)
-      {
-        urls: [
-          "turn:89.116.122.179:3478?transport=udp",
-          "turn:89.116.122.179:3478?transport=tcp",
-          "turns:89.116.122.179:5349?transport=tcp"
-        ],
-        username: "chatapp",
-        credential: "ChatApp@2024#Secure"
-      }
-    ],
-    iceTransportPolicy: "all"
-  });
-
-  // ✅ Add local stream
-  if (localStream) {
-    localStream.getTracks().forEach(track => {
-      pc.addTrack(track, localStream);
-    });
-  }
-
-  // ✅ Receive remote stream
-  pc.ontrack = (e) => {
-    console.log("🎥 TRACK RECEIVED:", remoteUser, e.streams);
-
-    if (e.streams && e.streams[0]) {
-      addRemoteVideo(remoteUser, e.streams[0]);
-
-      if (isCallMinimized) {
-        miniRemoteVideo.srcObject = e.streams[0];
-        miniPipAvatar.style.display = "none";
-      }
+function createPeerConnection(remoteUser){
+  if(peerConnections[remoteUser])return peerConnections[remoteUser];
+  const pc=new RTCPeerConnection({iceServers:rtcIceServers});
+  if(localStream)localStream.getTracks().forEach(t=>pc.addTrack(t,localStream));
+  pc.ontrack=e=>{
+    if(e.streams&&e.streams[0]){
+      addRemoteVideo(remoteUser,e.streams[0]);
+      if(isCallMinimized){miniRemoteVideo.srcObject=e.streams[0];miniPipAvatar.style.display='none';}
     }
   };
-
-  // ✅ ICE send
-  pc.onicecandidate = (e) => {
-    if (e.candidate) {
-      console.log("📤 Sending ICE...");
-      socket.emit("icecandidate", {
-        to: remoteUser,
-        candidate: e.candidate
-      });
-    }
-  };
-
-  // ✅ ICE state debug
-  pc.oniceconnectionstatechange = () => {
-    console.log("🧊 ICE State:", pc.iceConnectionState);
-  };
-
-  // ✅ Connection state debug
-  pc.onconnectionstatechange = () => {
-    console.log("🔗 Connection State:", pc.connectionState);
-
-    if (["failed", "closed"].includes(pc.connectionState)) {
-      console.log("❌ Cleaning peer:", remoteUser);
-      cleanupPeer(remoteUser);
-    }
-  };
-
-  peerConnections[remoteUser] = pc;
-  iceCandidateQueue[remoteUser] = [];
-
+  pc.onicecandidate=e=>{if(e.candidate)socket.emit('icecandidate',{to:remoteUser,candidate:e.candidate});};
+  pc.onconnectionstatechange=()=>{if(['disconnected','failed','closed'].includes(pc.connectionState))cleanupPeer(remoteUser);};
+  peerConnections[remoteUser]=pc;iceCandidateQueue[remoteUser]=[];
   return pc;
 }
 async function flushIce(user){
@@ -2828,28 +2574,18 @@ async function flushIce(user){
   while(q.length){try{await pc.addIceCandidate(new RTCIceCandidate(q.shift()));}catch{}}
 }
 async function sendOfferTo(user){
+  await ensureIceServersLoaded();
   const pc=createPeerConnection(user);if(pc.signalingState!=='stable')return;
   const offer=await pc.createOffer({offerToReceiveAudio:true,offerToReceiveVideo:currentCallType==='video'});
   await pc.setLocalDescription(offer);socket.emit('offer',{to:user,offer:pc.localDescription});
 }
-async function processOffer(from, offer) {
-  const pc = createPeerConnection(from);
-
-  await pc.setRemoteDescription(new RTCSessionDescription(offer));
-
-  console.log("✅ Offer received → flushing ICE");
-
-  if (iceCandidateQueue[from]) {
-    for (const c of iceCandidateQueue[from]) {
-      await pc.addIceCandidate(new RTCIceCandidate(c));
-    }
-    iceCandidateQueue[from] = [];
-  }
-
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-
-  socket.emit('answer', { to: from, answer });
+async function processOffer(from,offer){
+  await ensureIceServersLoaded();
+  let pc=peerConnections[from];if(pc&&pc.signalingState!=='stable'){pc.close();delete peerConnections[from];}
+  pc=createPeerConnection(from);
+  await pc.setRemoteDescription(new RTCSessionDescription(offer));await flushIce(from);
+  const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
+  socket.emit('answer',{to:from,answer:pc.localDescription});
 }
 function addRemoteVideo(username,stream){
   let wrapper=$(`remote-${username}`);

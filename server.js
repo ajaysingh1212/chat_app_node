@@ -130,7 +130,6 @@ async function initDb() {
 
   // Clean up expired calls on startup
   await q(`DELETE FROM active_calls WHERE expires_at < NOW()`);
-  await q(`ALTER TABLE call_history ADD COLUMN IF NOT EXISTS deleted_for JSON DEFAULT NULL`);
 
   console.log('✅ DB schema verified');
 }
@@ -195,6 +194,41 @@ function applyPrivacy(u, viewerId, isContact) {
   if (u.priv_photo === 'everyone') return url;
   if (u.priv_photo === 'contacts' && isContact) return url;
   return null;
+}
+function csvList(value) {
+  return String(value || '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+function getIceServers(user) {
+  const iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' }
+  ];
+  const turnUrls = csvList(process.env.TURN_URLS || process.env.TURN_URL);
+  if (!turnUrls.length) return iceServers;
+
+  let username = process.env.TURN_USERNAME || process.env.TURN_USER || '';
+  let credential = process.env.TURN_CREDENTIAL || process.env.TURN_PASSWORD || '';
+  if (process.env.TURN_SECRET) {
+    const ttl = Math.max(300, parseInt(process.env.TURN_TTL_SECONDS || '3600', 10));
+    const expires = Math.floor(Date.now() / 1000) + ttl;
+    username = `${expires}:${user?.username || user?.id || 'user'}`;
+    credential = crypto
+      .createHmac('sha1', process.env.TURN_SECRET)
+      .update(username)
+      .digest('base64');
+  }
+  if (username && credential) {
+    iceServers.push({
+      urls: turnUrls.length === 1 ? turnUrls[0] : turnUrls,
+      username,
+      credential
+    });
+  }
+  return iceServers;
 }
 
 // ── Helper: resolve chat key to numeric user ID ────────────────────────────
@@ -493,6 +527,10 @@ app.post('/api/upload/media', requireAuth, upload.single('file'), async (req, re
   } catch (e) { res.status(500).json({ error: 'Upload failed' }); }
 });
 
+app.get('/api/ice-servers', requireAuth, (req, res) => {
+  res.json({ iceServers: getIceServers(req.user) });
+});
+
 // ── Home ──────────────────────────────────────
 app.get('/', (req, res) => 
   res.sendFile(join(__dirname, 'app', 'index.html'))
@@ -569,9 +607,7 @@ app.get('/api/messages/private/:targetId', requireAuth, async (req, res) => {
         [unsentIds]
       );
       senderRows.forEach(sr => {
-        if (onlineUsers[sr.sender_id]) {
-          io.to(onlineUsers[sr.sender_id]).emit('messages-delivered', { msgIds: unsentIds });
-        }
+        emitToUser(sr.sender_id, 'messages-delivered', { msgIds: unsentIds });
       });
     }
 
@@ -692,9 +728,7 @@ app.post('/api/messages/mark-seen', requireAuth, async (req, res) => {
         );
       }
       // Notify sender
-      if (onlineUsers[fromUserId]) {
-        io.to(onlineUsers[fromUserId]).emit('messages-seen', { msgIds, by: req.user.username });
-      }
+      emitToUser(fromUserId, 'messages-seen', { msgIds, by: req.user.username });
     }
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -813,77 +847,20 @@ app.get('/api/live-location/chat/:chatKey', requireAuth, async (req, res) => {
 
 app.get('/api/calls', requireAuth, async (req, res) => {
   const me = req.user.id;
-  const { filter, from, to } = req.query; // filter: today|yesterday|week|month|year|custom
-  
-  let dateCondition = '';
-  const now = new Date();
-  
-  if (filter === 'today') {
-    dateCondition = `AND DATE(ch.started_at) = CURDATE()`;
-  } else if (filter === 'yesterday') {
-    dateCondition = `AND DATE(ch.started_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)`;
-  } else if (filter === 'week') {
-    dateCondition = `AND ch.started_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`;
-  } else if (filter === 'month') {
-    dateCondition = `AND MONTH(ch.started_at) = MONTH(NOW()) AND YEAR(ch.started_at) = YEAR(NOW())`;
-  } else if (filter === 'year') {
-    dateCondition = `AND YEAR(ch.started_at) = YEAR(NOW())`;
-  } else if (filter === 'custom' && from && to) {
-    dateCondition = `AND DATE(ch.started_at) BETWEEN '${from}' AND '${to}'`;
-  }
-
   const [rows] = await pool.query(`
     SELECT ch.id, ch.caller_id, ch.callee_id, ch.group_id, ch.call_type,
            ch.is_group, ch.status, ch.started_at, ch.ended_at, ch.duration_s,
            caller.username AS caller_name, caller.avatar_color AS caller_color,
-           COALESCE(caller.profile_pic, caller.avatar_url) AS caller_pic,
            callee.username AS callee_name, callee.avatar_color AS callee_color,
-           COALESCE(callee.profile_pic, callee.avatar_url) AS callee_pic,
            cg.name AS group_name
     FROM call_history ch
     JOIN users caller ON caller.id = ch.caller_id
     LEFT JOIN users callee ON callee.id = ch.callee_id
     LEFT JOIN chat_groups cg ON cg.id = ch.group_id
-    WHERE (ch.caller_id=? OR ch.callee_id=?)
-      AND NOT JSON_CONTAINS(COALESCE(ch.deleted_for, '[]'), JSON_ARRAY(?))
-      ${dateCondition}
-    ORDER BY ch.started_at DESC LIMIT 200
-  `, [me, me, me]);
+    WHERE ch.caller_id=? OR ch.callee_id=?
+    ORDER BY ch.started_at DESC LIMIT 100
+  `, [me, me]);
   res.json(rows);
-});
-
-// ── DELETE individual call history entry (only for this user) ──────────────
-app.delete('/api/calls/:callId', requireAuth, async (req, res) => {
-  const me = req.user.id;
-  try {
-    const [rows] = await pool.query(
-      'SELECT * FROM call_history WHERE id=?', [req.params.callId]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    const call = rows[0];
-    if (call.caller_id !== me && call.callee_id !== me)
-      return res.status(403).json({ error: 'Forbidden' });
-    const cur = call.deleted_for ? JSON.parse(call.deleted_for) : [];
-    if (!cur.includes(me)) cur.push(me);
-    await pool.query('UPDATE call_history SET deleted_for=? WHERE id=?',
-      [JSON.stringify(cur), req.params.callId]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── DELETE all call history for this user ─────────────────────────────────
-app.delete('/api/calls', requireAuth, async (req, res) => {
-  const me = req.user.id;
-  try {
-    // Mark all calls as deleted for this user
-    await pool.query(`
-      UPDATE call_history 
-      SET deleted_for = JSON_ARRAY_APPEND(COALESCE(deleted_for, '[]'), '$', ?)
-      WHERE (caller_id=? OR callee_id=?)
-        AND NOT JSON_CONTAINS(COALESCE(deleted_for, '[]'), JSON_ARRAY(?))
-    `, [me, me, me, me]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ══════════════════════════════════════════════
@@ -905,12 +882,8 @@ app.get('/api/status', requireAuth, async (req, res) => {
       JOIN users u ON u.id = sp.user_id
       WHERE sp.expires_at > NOW()
         AND (sp.user_id=? OR sp.user_id IN (SELECT contact_id FROM contacts WHERE user_id=?))
-        AND sp.user_id NOT IN (SELECT blocked_id FROM blocked_users WHERE user_id=?)
-        AND sp.user_id NOT IN (SELECT user_id FROM blocked_users WHERE blocked_id=?)
-      ORDER BY 
-  CASE WHEN sp.user_id = ? THEN 1 ELSE 0 END DESC,
-  sp.created_at DESC
-    `, [me, me, me, me, me, me]); // ✅ fixed param count
+      ORDER BY sp.user_id=? DESC, sp.created_at DESC
+    `, [me, me, me, me, me]);
 
     const userMap = {};
     posts.forEach(p => {
@@ -926,12 +899,8 @@ app.get('/api/status', requireAuth, async (req, res) => {
       }
       userMap[p.user_id].statuses.push(p);
     });
-
     res.json(Object.values(userMap));
-  } catch (e) {
-    console.error('status:', e);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch(e) { console.error('status:', e); res.status(500).json({ error: 'Server error' }); }
 });
 
 app.post('/api/status', requireAuth, async (req, res) => {
@@ -1094,9 +1063,40 @@ app.post('/api/chat-settings/:chatKey/verify-pin', requireAuth, async (req, res)
 //  SOCKET.IO
 // ══════════════════════════════════════════════
 
-const onlineUsers  = {};   // userId -> socketId
+const onlineUsers  = {};   // userId -> Set<socketId>
 const socketToUser = {};   // socketId -> {id, username}
 const callRooms    = {};   // roomId -> {members:Set, type, callId, histId, callerId}
+
+function addOnlineSocket(userId, socketId) {
+  if (!onlineUsers[userId]) onlineUsers[userId] = new Set();
+  onlineUsers[userId].add(socketId);
+}
+function removeOnlineSocket(userId, socketId) {
+  const sockets = onlineUsers[userId];
+  if (!sockets) return;
+  sockets.delete(socketId);
+  if (!sockets.size) delete onlineUsers[userId];
+}
+function isUserOnline(userId) {
+  return !!onlineUsers[userId]?.size;
+}
+function emitToUser(userId, event, data) {
+  const sockets = onlineUsers[userId];
+  if (!sockets?.size) return;
+  sockets.forEach(sid => io.to(sid).emit(event, data));
+}
+function emitToSocket(socketId, event, data) {
+  if (socketId) io.to(socketId).emit(event, data);
+}
+function findCallRoomForUsers(a, b) {
+  return Object.values(callRooms).find(room => room.members?.has(a) && room.members?.has(b));
+}
+function emitCallSignal(fromId, toId, event, data) {
+  const room = findCallRoomForUsers(fromId, toId);
+  const sid = room?.memberSockets?.get(toId);
+  if (sid) emitToSocket(sid, event, data);
+  else emitToUser(toId, event, data);
+}
 
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
@@ -1107,7 +1107,7 @@ io.use((socket, next) => {
 
 io.on('connection', async (socket) => {
   const { id: myId, username } = socket.user;
-  onlineUsers[myId]       = socket.id;
+  addOnlineSocket(myId, socket.id);
   socketToUser[socket.id] = { id: myId, username };
 
   await pool.query('UPDATE users SET is_online=1, last_seen=NULL WHERE id=?', [myId]);
@@ -1158,8 +1158,7 @@ io.on('connection', async (socket) => {
     return r[0]?.id || null;
   }
   function emitTo(userId, event, data) {
-    const sid = onlineUsers[userId];
-    if (sid) io.to(sid).emit(event, data);
+    emitToUser(userId, event, data);
   }
   async function emitToGroupMembers(groupId, event, data, excludeMe = false) {
     const [members] = await pool.query(
@@ -1244,7 +1243,7 @@ io.on('connection', async (socket) => {
       replyToId: replyToId||null
     };
 
-    if (onlineUsers[toId]) {
+    if (isUserOnline(toId)) {
       // Deliver immediately
       emitTo(toId, 'private-message', { ...msg, status: 'delivered' });
       await pool.query(
@@ -1507,28 +1506,13 @@ io.on('connection', async (socket) => {
   //  CALL SIGNALING
   // ════════════════════════════════════════════
 
-socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
-  // Block check for 1:1 calls
-  if (!isGroup && to) {
-    const toId = await getUserId(to);
-    if (toId) {
-      const [blocked] = await pool.query(
-        'SELECT 1 FROM blocked_users WHERE (user_id=? AND blocked_id=?) OR (user_id=? AND blocked_id=?)',
-        [myId, toId, toId, myId]
-      );
-      if (blocked.length) {
-        socket.emit('call-blocked', { to });
-        return;
-      }
+  socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
+    const callId = roomId || genId();
+    if (!callRooms[callId]) {
+      callRooms[callId] = { members: new Set(), memberSockets: new Map(), type: callType, callId };
     }
-  }
-  
-  const callId = roomId || genId();
-  if (!callRooms[callId]) {
-    callRooms[callId] = { members: new Set(), type: callType, callId };
-  }
-  callRooms[callId].members.add(myId);
-  
+    callRooms[callId].members.add(myId);
+    callRooms[callId].memberSockets.set(myId, socket.id);
 
     // Save to DB for reconnect
     try {
@@ -1580,15 +1564,21 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
       const room = callRooms[roomId];
       const existing = [...room.members];
       room.members.add(myId);
+      room.memberSockets?.set(myId, socket.id);
       if (room.histId) {
         await pool.query(
           'UPDATE call_history SET status="answered", started_at=NOW() WHERE id=?',
           [room.histId]
         );
       }
-      emitTo(toId, 'call-accepted', { from: username, callType });
+      emitToSocket(room.memberSockets?.get(toId), 'call-accepted', { from: username, callType });
+      if (!room.memberSockets?.get(toId)) emitTo(toId, 'call-accepted', { from: username, callType });
       for (const uid of existing) {
-        if (uid !== myId) emitTo(uid, 'please-connect', { to: username });
+        if (uid !== myId) {
+          const sid = room.memberSockets?.get(uid);
+          if (sid) emitToSocket(sid, 'please-connect', { to: username });
+          else emitTo(uid, 'please-connect', { to: username });
+        }
       }
     } else {
       emitTo(toId, 'call-accepted', { from: username, callType });
@@ -1598,7 +1588,11 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
 
   socket.on('call-rejected', async ({ to, roomId }) => {
     const toId = await getUserId(to);
-    if (toId) emitTo(toId, 'call-rejected', { from: username });
+    if (toId) {
+      const sid = roomId ? callRooms[roomId]?.memberSockets?.get(toId) : null;
+      if (sid) emitToSocket(sid, 'call-rejected', { from: username });
+      else emitTo(toId, 'call-rejected', { from: username });
+    }
     if (roomId && callRooms[roomId]?.histId) {
       await pool.query(
         'UPDATE call_history SET status="rejected", ended_at=NOW() WHERE id=?',
@@ -1612,11 +1606,12 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
       await emitToGroupMembers(groupId, 'call-ended', { from: username }, true);
     } else {
       const toId = await getUserId(to);
-      if (toId) emitTo(toId, 'call-ended', { from: username });
+      if (toId) emitCallSignal(myId, toId, 'call-ended', { from: username });
     }
     if (roomId && callRooms[roomId]) {
       const room = callRooms[roomId];
       room.members.delete(myId);
+      room.memberSockets?.delete(myId);
       if (room.histId && durationSeconds > 0) {
         await pool.query(
           'UPDATE call_history SET ended_at=NOW(), duration_s=?, status="completed" WHERE id=?',
@@ -1633,7 +1628,10 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
       }
     }
     // Remove from all rooms
-    for (const rid in callRooms) callRooms[rid].members.delete(myId);
+    for (const rid in callRooms) {
+      callRooms[rid].members.delete(myId);
+      callRooms[rid].memberSockets?.delete(myId);
+    }
     // Remove from DB
     try {
       await pool.query('DELETE FROM active_call_members WHERE room_id=? AND user_id=?', [roomId||'', myId]);
@@ -1643,7 +1641,7 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
   // FIXED: Hold call event
   socket.on('call-hold', async ({ to, onHold }) => {
     const toId = await getUserId(to);
-    if (toId) emitTo(toId, 'call-hold', { from: username, onHold });
+    if (toId) emitCallSignal(myId, toId, 'call-hold', { from: username, onHold });
   });
 
   socket.on('add-to-call', async ({ to, callType, roomId }) => {
@@ -1659,6 +1657,7 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
     // Check if room exists
     if (callRooms[roomId]) {
       callRooms[roomId].members.add(myId);
+      callRooms[roomId].memberSockets?.set(myId, socket.id);
     } else {
       // Check DB
       try {
@@ -1668,6 +1667,7 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
         if (roomRows.length > 0) {
           callRooms[roomId] = {
             members: new Set([myId]),
+            memberSockets: new Map([[myId, socket.id]]),
             type: callType,
             callId: roomId
           };
@@ -1676,6 +1676,12 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
         }
       } catch(e) { return; }
     }
+    try {
+      await pool.query(
+        'INSERT IGNORE INTO active_call_members (room_id,user_id,username) VALUES (?,?,?)',
+        [roomId, myId, username]
+      );
+    } catch(e) {}
 
     // Notify other members in room to reconnect
     try {
@@ -1694,61 +1700,48 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
   // FIXED: call-peer-reconnect forward
   socket.on('call-peer-reconnect', async ({ to, callType, roomId }) => {
     const toId = await getUserId(to);
-    if (toId) emitTo(toId, 'call-peer-reconnect', { from: username, callType, roomId });
+    if (toId) emitCallSignal(myId, toId, 'call-peer-reconnect', { from: username, callType, roomId });
   });
 
   // ── WebRTC Signaling ───────────────────────────────────────────────────────
   socket.on('offer', async ({ to, offer }) => {
     const t = await getUserId(to);
-    if (t) emitTo(t, 'offer', { from: username, offer });
+    if (t) emitCallSignal(myId, t, 'offer', { from: username, offer });
   });
 
   socket.on('answer', async ({ to, answer }) => {
     const t = await getUserId(to);
-    if (t) emitTo(t, 'answer', { from: username, answer });
+    if (t) emitCallSignal(myId, t, 'answer', { from: username, answer });
   });
 
   socket.on('icecandidate', async ({ to, candidate }) => {
     const t = await getUserId(to);
-    if (t) emitTo(t, 'icecandidate', { from: username, candidate });
+    if (t) emitCallSignal(myId, t, 'icecandidate', { from: username, candidate });
   });
 
   socket.on('toggle-media', async ({ to, kind, enabled }) => {
     const t = await getUserId(to);
-    if (t) emitTo(t, 'peer-toggle-media', { from: username, kind, enabled });
+    if (t) emitCallSignal(myId, t, 'peer-toggle-media', { from: username, kind, enabled });
   });
 
   socket.on('please-connect', async ({ to }) => {
     const t = await getUserId(to);
-    if (t) emitTo(t, 'please-connect', { to: username });
-  });
-  socket.on('block-user', async ({ blockedUsername }) => {
-    const blockedId = await getUserId(blockedUsername);
-    if (blockedId) {
-      // Notify blocked user — hide blocker's info
-      emitTo(blockedId, 'you-were-blocked', { 
-        by: username, 
-        byId: myId,
-        // Force remove avatar, online status from blocked user's view
-        hideAvatar: true,
-        hideOnline: true,
-        hideStatus: true
-      });
-      // Notify blocker — update their UI
-      socket.emit('block-action', { blockedUsername, blockedId, action: 'blocked' });
-    }
+    if (t) emitCallSignal(myId, t, 'please-connect', { to: username });
   });
 
-  socket.on('unblock-user', async ({ unblockedUsername }) => {
-    const unblockedId = await getUserId(unblockedUsername);
-    if (unblockedId) {
-      emitTo(unblockedId, 'you-were-unblocked', { by: username, byId: myId });
-      socket.emit('block-action', { unblockedUsername, unblockedId, action: 'unblocked' });
-    }
-  });
   // ── Disconnect ─────────────────────────────────────────────────────────────
   socket.on('disconnect', async () => {
     const lastSeen = new Date();
+    delete socketToUser[socket.id];
+    removeOnlineSocket(myId, socket.id);
+
+    for (const rid in callRooms) {
+      const room = callRooms[rid];
+      if (room.memberSockets?.get(myId) === socket.id) room.memberSockets.delete(myId);
+    }
+
+    if (isUserOnline(myId)) return;
+
     try {
       await pool.query(
         'UPDATE users SET is_online=0, last_seen=? WHERE id=?',
@@ -1760,12 +1753,10 @@ socket.on('call-invite', async ({ to, callType, isGroup, groupId, roomId }) => {
       );
     } catch(e) {}
 
-    delete onlineUsers[myId];
-    delete socketToUser[socket.id];
-
     // Remove from call rooms
     for (const rid in callRooms) {
       callRooms[rid].members.delete(myId);
+      callRooms[rid].memberSockets?.delete(myId);
       if (callRooms[rid].members.size === 0) {
         delete callRooms[rid];
       }
