@@ -155,7 +155,7 @@
   .recording-bar{flex-shrink:0}
 }
 /* ── Mini Call PiP with local video ─── */
-.mini-call-pip{position:fixed;bottom:90px;right:18px;z-index:900;width:360px;
+.mini-call-pip{position:fixed;bottom:90px;right:18px;z-index:900;width:360px;display:none;
   background:#0d1a2a;border-radius:16px;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.7);
   cursor:move;border:1px solid #223045}
 .mini-pip-remote{width:100%;height:120px;background:#000;position:relative}
@@ -179,6 +179,43 @@
 #localVideoWrap{position:absolute;bottom:80px;right:16px;width:90px;height:120px;
   border-radius:12px;overflow:hidden;border:2px solid #00bfa5;background:#000;z-index:5;cursor:move}
 #localVideoWrap video{width:100%;height:100%;object-fit:cover;display:block}
+.call-top-strip{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:930;
+  min-width:260px;max-width:calc(100vw - 24px);background:#0b141c;border:1px solid #223045;
+  border-radius:8px;box-shadow:0 8px 26px rgba(0,0,0,.45);padding:8px 10px;display:none;
+  align-items:center;gap:10px;color:#d8e4f0}
+.call-top-strip .cts-dot{width:8px;height:8px;border-radius:50%;background:#00bfa5;animation:recPulse 1.2s infinite;flex-shrink:0}
+.call-top-strip .cts-body{flex:1;min-width:0;cursor:pointer}
+.call-top-strip .cts-title{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.call-top-strip .cts-sub{font-size:11px;color:#8aa0b6;margin-top:1px}
+.call-top-strip .cts-end{border:none;background:#e53e3e;color:#fff;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer}
+.held-call-strip{position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:925;
+  min-width:250px;max-width:calc(100vw - 24px);background:#1a2433;border:1px solid #2a3d56;
+  border-left:3px solid #f6ad55;border-radius:8px;padding:8px 11px;display:none;color:#d8e4f0;
+  box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.held-call-strip .hcs-title{font-size:12px;font-weight:700;color:#f6ad55}
+.held-call-strip .hcs-sub{font-size:11px;color:#8aa0b6;margin-top:2px}
+.remote-hold-overlay{position:absolute;inset:0;background:rgba(0,0,0,.78);display:flex;
+  align-items:center;justify-content:center;flex-direction:column;gap:6px;z-index:8;color:#fff;text-align:center}
+.remote-hold-overlay .rho-title{font-size:13px;font-weight:800}
+.remote-hold-overlay .rho-sub{font-size:11px;color:#b7c5d4}
+.audio-hold-note{margin-top:10px;padding:7px 12px;border-radius:8px;background:rgba(246,173,85,.14);
+  color:#f6ad55;font-size:12px;font-weight:700}
+.call-history-toolbar{padding:10px 12px;border-bottom:1px solid var(--border);background:var(--bg2)}
+.chf-scroll{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px}
+.chf-btn{flex-shrink:0;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:transparent;
+  color:var(--ts);font-size:12px;font-weight:600;cursor:pointer}
+.chf-btn.active{background:var(--accent);border-color:var(--accent);color:#000}
+.chf-custom-wrap{display:none;gap:6px;align-items:center;flex-wrap:wrap}
+.chf-date-input{min-width:126px;flex:1;padding:7px 9px;border-radius:8px;border:1px solid var(--border);
+  background:var(--bg3);color:var(--tp);font-size:12px;outline:none}
+.chf-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
+.chf-search-btn,.chf-delete-selected{border:none;border-radius:8px;padding:7px 11px;font-size:12px;font-weight:700;cursor:pointer}
+.chf-search-btn{background:var(--accent);color:#000}
+.chf-delete-selected{background:#e53e3e;color:#fff}
+.chf-delete-selected:disabled{opacity:.45;cursor:not-allowed}
+.ch-select{width:18px;height:18px;accent-color:var(--accent);flex-shrink:0}
+.ch-delete-btn{border:none;background:transparent;color:#e53e3e;border-radius:8px;padding:6px;cursor:pointer;font-size:13px;opacity:1}
+.call-hist-item.selected{background:rgba(0,191,165,.08)}
 `;
   document.head.appendChild(s);
 })();
@@ -298,6 +335,9 @@ let activeReactionPicker=null;
 // FIXED: hold call state
 let heldCallPeer=null,heldCallType='audio',heldCallRoomId=null;
 let isCallOnHold=false;
+let heldCallSenders=[],heldCallName=null;
+let callHistoryFilter='all',callHistoryFrom='',callHistoryTo='',lastCallHistory=[];
+let selectedCallIds=new Set();
 const typingUsers=new Set();
 const peerConnections={},iceCandidateQueue={},pendingOffers={};
 let liveMapInstance=null,liveMarker=null;
@@ -494,6 +534,24 @@ function injectInputBarExtras(){
     document.body.appendChild(m);
     $('closeFwdModal').addEventListener('click',()=>{m.style.display='none';});
     m.addEventListener('click',e=>{if(e.target===m)m.style.display='none';});
+  }
+  // Audio-call top strip (WhatsApp-style minimized link)
+  if(!$('callTopStrip')){
+    const strip=document.createElement('div');strip.id='callTopStrip';strip.className='call-top-strip';
+    strip.innerHTML=`<span class="cts-dot"></span><div class="cts-body" id="callTopExpand">
+      <div class="cts-title" id="callTopTitle">Ongoing call</div>
+      <div class="cts-sub" id="callTopSub">Tap to return • <span id="callTopDur">00:00</span></div>
+    </div><button class="cts-end" id="callTopEnd">End</button>`;
+    document.body.appendChild(strip);
+    $('callTopExpand').addEventListener('click',expandMinimizedCall);
+    $('callTopEnd').addEventListener('click',endAllCalls);
+  }
+  // Local notice while the previous call is held
+  if(!$('heldCallStrip')){
+    const strip=document.createElement('div');strip.id='heldCallStrip';strip.className='held-call-strip';
+    strip.innerHTML=`<div class="hcs-title" id="heldCallTitle">Call on hold</div>
+      <div class="hcs-sub" id="heldCallSub">Your previous call is waiting.</div>`;
+    document.body.appendChild(strip);
   }
   // FIXED: Make mini PiP draggable
   makeDraggable(miniCallPip);
@@ -692,7 +750,7 @@ function initSocket(){
   socket.on('call-invite',({from,callType,isGroup,groupId,addToCall,roomId})=>{
     if(isGroup&&groupId){handleGroupCallInvite(from,callType,groupId,roomId);return;}
     pendingIncomingCaller=from;pendingIncomingCallType=callType||'audio';pendingIncomingRoomId=roomId||null;
-    if(activeCallScreen.style.display==='flex'){
+    if(activeCallScreen.style.display==='flex'||isCallMinimized||currentCallPeers.length>0){
       iocAvatar.textContent=getInitial(from);iocAvatar.style.background=getAvatarColor(from);
       iocName.textContent=from;iocType.textContent=callType==='video'?'Incoming video call':'Incoming voice call';
       incomingOnCallBanner.style.display='flex';playRingtone(true);return;
@@ -715,6 +773,12 @@ function initSocket(){
   socket.on('call-rejected',({from})=>{hideOutgoingRing();showToast(`${from} declined the call`);});
   socket.on('call-ended',({from})=>{
     cleanupPeer(from);currentCallPeers=currentCallPeers.filter(u=>u!==from);
+    if(from===heldCallPeer){
+      resumeHeldMedia();hideHeldCallStrip();
+      isCallOnHold=false;heldCallPeer=null;heldCallRoomId=null;heldCallType='audio';
+      showToast(`${from} ended the held call`);
+      return;
+    }
     // FIXED: If on hold call ends, resume held call instead of ending everything
     if(currentCallPeers.length===0){
       if(isCallOnHold && heldCallPeer){
@@ -752,6 +816,11 @@ function initSocket(){
   });
   socket.on('peer-toggle-media',({from,kind,enabled})=>{
     if(kind==='audio'){const el=$(`mute-ind-${from}`);if(el)el.style.display=enabled?'none':'flex';}
+    if(kind==='video')setPeerVideoPaused(from,!enabled);
+  });
+  socket.on('call-hold',({from,onHold,roomId})=>{
+    if(roomId&&currentCallRoomId&&roomId!==currentCallRoomId)return;
+    setPeerHoldUI(from,onHold);
   });
 
   // FIXED: Reconnect peers after page refresh
@@ -765,19 +834,121 @@ function initSocket(){
 /* ── Resume held call after new call ends ─── */
 function resumeHeldCall(){
   if(!heldCallPeer)return;
+  const peer=heldCallPeer,type=heldCallType,roomId=heldCallRoomId;
   isCallOnHold=false;
-  currentCallPeers=[heldCallPeer];
-  currentCallType=heldCallType;
-  currentCallRoomId=heldCallRoomId;
+  currentCallPeers=[peer];
+  currentCallType=type;
+  currentCallRoomId=roomId;
+  resumeHeldMedia();
+  if(peer)socket.emit('call-hold',{to:peer,onHold:false,roomId});
+  hideHeldCallStrip();
   heldCallPeer=null;heldCallType='audio';heldCallRoomId=null;
-  // Resume local stream
-  if(localStream)localStream.getTracks().forEach(t=>t.enabled=true);
   // Remove hold overlay from active call screen
   const holdOv=activeCallScreen.querySelector('.hold-overlay');
   if(holdOv)holdOv.remove();
   activeCallScreen.style.display='flex';
+  miniCallPip.style.display='none';
+  hideCallTopStrip();
+  const u=allUsersMap[peer]||contacts[peer]||{username:peer};
+  setAvatarEl(audioCallAvatar,u);
+  audioCallName.textContent=peer;
+  if(type==='video'){
+    callVideoArea.style.display='block';audioCallDisplay.style.display='none';aCallVideoBtn.style.display='flex';
+    setTimeout(()=>createLocalPip(),200);
+  }else{
+    callVideoArea.style.display='none';audioCallDisplay.style.display='flex';aCallVideoBtn.style.display='none';
+  }
   showToast('Resumed previous call');
   startCallTimer();
+}
+
+function holdPeerMedia(peer){
+  heldCallSenders=[];
+  const pc=peerConnections[peer];
+  if(!pc)return;
+  pc.getSenders().forEach(sender=>{
+    if(!sender.track)return;
+    heldCallSenders.push({sender,track:sender.track});
+    sender.replaceTrack(null).catch(()=>{});
+  });
+}
+
+function resumeHeldMedia(){
+  heldCallSenders.forEach(({sender,track})=>{
+    const liveTrack=localStream?.getTracks().find(t=>t.kind===track?.kind&&t.readyState!=='ended')||track;
+    if(liveTrack&&liveTrack.readyState!=='ended')sender.replaceTrack(liveTrack).catch(()=>{});
+  });
+  heldCallSenders=[];
+}
+
+function showHeldCallStrip(peer){
+  const strip=$('heldCallStrip');if(!strip)return;
+  heldCallName=peer;
+  $('heldCallTitle').textContent='Call on hold';
+  $('heldCallSub').textContent=`${peer||'Previous call'} is waiting. Your camera and mic are paused there.`;
+  strip.style.display='block';
+}
+
+function hideHeldCallStrip(){
+  const strip=$('heldCallStrip');if(strip)strip.style.display='none';
+  heldCallName=null;
+}
+
+function setPeerVideoPaused(peer,paused){
+  const wrapper=$(`remote-${peer}`);
+  const video=wrapper?.querySelector('video');
+  if(video)video.style.filter=paused?'brightness(.2) grayscale(1)':'';
+}
+
+function setPeerHoldUI(peer,onHold){
+  const wrapper=$(`remote-${peer}`);
+  if(wrapper){
+    let ov=wrapper.querySelector('.remote-hold-overlay');
+    if(onHold&&!ov){
+      ov=document.createElement('div');ov.className='remote-hold-overlay';
+      ov.innerHTML=`<div class="rho-title">Call on hold</div><div class="rho-sub">${peer} paused camera and mic</div>`;
+      wrapper.appendChild(ov);
+    }else if(!onHold&&ov){ov.remove();}
+  }
+  let note=$('audioHoldNote');
+  if(onHold&&!note&&audioCallDisplay){
+    note=document.createElement('div');note.id='audioHoldNote';note.className='audio-hold-note';
+    note.textContent=`${peer} put this call on hold`;
+    audioCallDisplay.appendChild(note);
+  }else if(!onHold&&note){note.remove();}
+  if(isCallMinimized){
+    const avatar=$('miniPipAvatar');
+    const wrap=$('miniPipVideoWrap');
+    if(wrap&&onHold&&!wrap.querySelector('.mini-pip-hold-overlay')){
+      const ov=document.createElement('div');ov.className='mini-pip-hold-overlay';
+      ov.innerHTML=`<div class="hold-lbl">Call on hold</div>`;
+      wrap.appendChild(ov);
+      if(avatar)avatar.style.display='flex';
+    }else if(wrap&&!onHold){
+      wrap.querySelector('.mini-pip-hold-overlay')?.remove();
+    }
+  }
+  setPeerVideoPaused(peer,onHold);
+}
+
+function showCallTopStrip(){
+  const strip=$('callTopStrip');if(!strip)return;
+  const peer=currentCallPeers[0]||audioCallName?.textContent||'Call';
+  $('callTopTitle').textContent=`Return to call with ${peer}`;
+  $('callTopDur').textContent=callDuration?.textContent||'00:00';
+  strip.style.display='flex';
+}
+
+function hideCallTopStrip(){
+  const strip=$('callTopStrip');if(strip)strip.style.display='none';
+}
+
+function expandMinimizedCall(){
+  hideCallTopStrip();
+  miniCallPip.style.display='none';
+  activeCallScreen.style.display='flex';
+  isCallMinimized=false;
+  if(currentCallType==='video')createLocalPip();
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -1926,6 +2097,104 @@ function renderCallHistory(calls){
   });
 }
 
+async function loadCallHistoryV2(){
+  const qs=new URLSearchParams();
+  if(callHistoryFilter&&callHistoryFilter!=='all')qs.set('filter',callHistoryFilter);
+  if(callHistoryFrom)qs.set('from',callHistoryFrom);
+  if(callHistoryTo)qs.set('to',callHistoryTo);
+  try{
+    const calls=await api('GET','/api/calls'+(qs.toString()?`?${qs}`:''));
+    lastCallHistory=calls;
+    renderCallHistoryV2(calls);
+  }catch(e){console.error('call history:',e);}
+}
+
+function renderCallHistoryV2(calls){
+  callHistoryList.innerHTML='';
+  callHistoryList.appendChild(buildCallHistoryToolbar());
+  if(!calls.length){
+    callHistoryList.insertAdjacentHTML('beforeend',`<div class="empty-panel-hint"><svg viewBox="0 0 24 24" width="40" height="40" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="currentColor" stroke-width="1.5"/></svg><p>No call history found</p></div>`);
+    return;
+  }
+  calls.forEach(c=>{
+    const isMe=c.caller_id===myUser.id;
+    const otherName=isMe?(c.callee_name||c.group_name||'?'):(c.caller_name||'?');
+    const otherColor=isMe?(c.callee_color||'#00A884'):(c.caller_color||'#00A884');
+    let direction,dirClass;
+    if(c.status==='missed'){direction='Missed';dirClass='ch-icon-miss';}
+    else if(isMe){direction='Outgoing';dirClass='ch-icon-out';}
+    else{direction='Incoming';dirClass='ch-icon-in';}
+    const d=new Date(c.started_at);
+    const item=document.createElement('div');item.className='call-hist-item';
+    if(selectedCallIds.has(c.id))item.classList.add('selected');
+    item.innerHTML=`<input type="checkbox" class="ch-select" data-id="${c.id}" ${selectedCallIds.has(c.id)?'checked':''}>
+      <div class="ch-avatar" style="background:${otherColor}">${getInitial(otherName)}</div>
+      <div class="ch-body"><div class="ch-name">${otherName}</div>
+      <div class="ch-meta"><span class="${dirClass}">${direction}</span><span>|</span><span>${c.call_type==='video'?'Video':'Audio'}${c.is_group?' Group':''}</span>${c.duration_s?`<span>| ${fmtDuration(c.duration_s)}</span>`:''}</div></div>
+      <div class="ch-side"><div class="ch-time">${d.toLocaleDateString([],{day:'2-digit',month:'short'})}<br><small>${d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small></div>
+      <button class="ch-delete-btn" data-id="${c.id}" title="Delete call">Delete</button></div>`;
+    item.querySelector('.ch-select').addEventListener('click',e=>{
+      e.stopPropagation();
+      const id=e.currentTarget.dataset.id;
+      if(e.currentTarget.checked)selectedCallIds.add(id);else selectedCallIds.delete(id);
+      renderCallHistoryV2(lastCallHistory);
+    });
+    item.querySelector('.ch-delete-btn').addEventListener('click',async e=>{
+      e.stopPropagation();
+      await deleteCalls([e.currentTarget.dataset.id]);
+    });
+    item.addEventListener('click',()=>{if(!c.is_group&&otherName&&contacts[otherName]){openChat({type:'private',id:otherName,name:otherName,isGroup:false});switchPanel('chats');if(window.innerWidth<=768)showMain();}});
+    callHistoryList.appendChild(item);
+  });
+}
+
+function buildCallHistoryToolbar(){
+  const bar=document.createElement('div');bar.className='call-history-toolbar';
+  const filters=[['all','All'],['missed','Missed'],['incoming','Incoming'],['outgoing','Outgoing'],['audio','Audio'],['video','Video'],['custom','Date range']];
+  bar.innerHTML=`<div class="chf-scroll">${filters.map(([id,label])=>`<button class="chf-btn ${callHistoryFilter===id?'active':''}" data-filter="${id}">${label}</button>`).join('')}</div>
+    <div class="chf-custom-wrap" style="display:${callHistoryFilter==='custom'?'flex':'none'}">
+      <input type="date" class="chf-date-input" id="callFromDate" value="${callHistoryFrom}">
+      <input type="date" class="chf-date-input" id="callToDate" value="${callHistoryTo}">
+      <button class="chf-search-btn" id="callDateSearch">Search</button>
+    </div>
+    <div class="chf-actions">
+      <span style="font-size:12px;color:var(--ts)">${selectedCallIds.size} selected</span>
+      <button class="chf-delete-selected" id="deleteSelectedCalls" ${selectedCallIds.size?'':'disabled'}>Delete selected</button>
+    </div>`;
+  bar.querySelectorAll('.chf-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      callHistoryFilter=btn.dataset.filter;
+      if(callHistoryFilter!=='custom'){callHistoryFrom='';callHistoryTo='';}
+      selectedCallIds.clear();
+      loadCallHistory();
+    });
+  });
+  bar.querySelector('#callDateSearch')?.addEventListener('click',()=>{
+    callHistoryFilter='custom';
+    callHistoryFrom=bar.querySelector('#callFromDate')?.value||'';
+    callHistoryTo=bar.querySelector('#callToDate')?.value||'';
+    selectedCallIds.clear();
+    loadCallHistory();
+  });
+  bar.querySelector('#deleteSelectedCalls')?.addEventListener('click',async()=>{await deleteCalls([...selectedCallIds]);});
+  return bar;
+}
+
+async function deleteCalls(ids){
+  ids=ids.filter(Boolean);
+  if(!ids.length)return;
+  try{
+    if(ids.length===1)await api('DELETE',`/api/calls/${encodeURIComponent(ids[0])}`);
+    else await api('DELETE','/api/calls',{ids});
+    ids.forEach(id=>selectedCallIds.delete(id));
+    showToast(ids.length===1?'Call deleted':'Selected calls deleted');
+    loadCallHistory();
+  }catch(e){showToast(e.message||'Delete failed');}
+}
+
+loadCallHistory=loadCallHistoryV2;
+renderCallHistory=renderCallHistoryV2;
+
 /* ════════════════════════════════════════════════════════════════════════════
    STATUS  (WhatsApp-style 24h)
 ════════════════════════════════════════════════════════════════════════════ */
@@ -2255,11 +2524,12 @@ iocHoldAccept?.addEventListener('click',async()=>{
   heldCallRoomId=currentCallRoomId;
   isCallOnHold=true;
 
-  // Pause current call media (audio + video)
-  if(localStream)localStream.getTracks().forEach(t=>t.enabled=false);
+  // Pause media only for the held peer. The same camera/mic can serve the new call.
+  if(heldCallPeer)holdPeerMedia(heldCallPeer);
   // Notify current peer they are on hold
   if(heldCallPeer){
     socket.emit('call-hold',{to:heldCallPeer,onHold:true,roomId:heldCallRoomId});
+    showHeldCallStrip(heldCallPeer);
   }
   // Add hold overlay to active call screen
   const existingHold=activeCallScreen.querySelector('.hold-overlay');
@@ -2271,6 +2541,7 @@ iocHoldAccept?.addEventListener('click',async()=>{
 
   // Accept new incoming call
   incomingOnCallBanner.style.display='none';
+  miniCallPip.style.display='none';hideCallTopStrip();isCallMinimized=false;
   const newCaller=pendingIncomingCaller;
   const newType=pendingIncomingCallType;
   const newRoomId=pendingIncomingRoomId;
@@ -2285,6 +2556,7 @@ iocHoldAccept?.addEventListener('click',async()=>{
 
   socket.emit('call-accepted',{to:newCaller,callType:newType,roomId:newRoomId});
   await showActiveCallScreen(newCaller,newType);
+  activeCallScreen.querySelector('.hold-overlay')?.remove();
   if(pendingOffers[newCaller]){processOffer(newCaller,pendingOffers[newCaller]);delete pendingOffers[newCaller];}
   playRingtone(false);
 });
@@ -2297,12 +2569,13 @@ iocCutAccept?.addEventListener('click',async()=>{
   currentCallPeers.forEach(u=>socket.emit('call-ended',{to:u,isGroup:isGroupCall,groupId:currentGroupCallId,roomId:currentCallRoomId,durationSeconds:dur}));
   Object.keys(peerConnections).forEach(cleanupPeer);
   // Reset hold state too
-  isCallOnHold=false;heldCallPeer=null;
+  isCallOnHold=false;heldCallPeer=null;resumeHeldMedia();hideHeldCallStrip();
   // Clear active call screen
   activeCallScreen.style.display='none';clearInterval(callTimer);callSeconds=0;
   currentCallPeers=[];
   // Now accept
   incomingOnCallBanner.style.display='none';
+  miniCallPip.style.display='none';hideCallTopStrip();isCallMinimized=false;
   await acceptBannerCall();
 });
 
@@ -2330,6 +2603,7 @@ async function handleGroupCallInvite(from,callType,groupId,roomId){
 async function showActiveCallScreen(peerName, callType) {
   if(!currentCallPeers.includes(peerName))currentCallPeers.push(peerName);
   activeCallScreen.style.display = 'flex';
+  hideCallTopStrip();
 
   const u = allUsersMap[peerName] || contacts[peerName];
   setAvatarEl(audioCallAvatar, u || { username: peerName });
@@ -2481,6 +2755,8 @@ function endAllCalls(){
 function cleanupCall(){
   activeCallScreen.style.display = 'none';
   miniCallPip.style.display = 'none';
+  hideCallTopStrip();
+  hideHeldCallStrip();
   isCallMinimized = false;
   callVideoArea.style.display = 'none';
   audioCallDisplay.style.display = 'flex';
@@ -2498,7 +2774,8 @@ function cleanupCall(){
   document.getElementById('callLocalPip')?.remove();
   // Remove hold overlay
   activeCallScreen?.querySelector('.hold-overlay')?.remove();
-  isCallOnHold = false; heldCallPeer = null;
+  resumeHeldMedia();
+  isCallOnHold = false; heldCallPeer = null; heldCallRoomId = null; heldCallType = 'audio';
   if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
   remoteVideosGrid.innerHTML = '';
 }
@@ -2508,6 +2785,12 @@ aCallMinimizeBtn?.addEventListener('click', () => {
   activeCallScreen.style.display = 'none';
   // Remove local pip from fullscreen
   document.getElementById('callLocalPip')?.remove();
+  if(currentCallType==='audio'){
+    miniCallPip.style.display='none';
+    showCallTopStrip();
+    isCallMinimized=true;
+    return;
+  }
  
   // Set remote video in mini pip
   const remoteVid = remoteVideosGrid.querySelector('video');
@@ -2528,8 +2811,8 @@ aCallMinimizeBtn?.addEventListener('click', () => {
   miniCallPip.style.display = 'flex';
   isCallMinimized = true;
 });
-miniPipExpand?.addEventListener('click',()=>{miniCallPip.style.display='none';activeCallScreen.style.display='flex';isCallMinimized=false;updateLocalVideoPip();});
-miniCallPip?.addEventListener('click',e=>{if(e.target===miniCallPip||e.target.closest('.mini-pip-info'))miniPipExpand.click();});
+miniPipExpand?.addEventListener('click',expandMinimizedCall);
+miniCallPip?.addEventListener('click',e=>{if(e.target===miniCallPip||e.target.closest('.mini-pip-info'))expandMinimizedCall();});
 
 function startCallTimer(){
   callSeconds=0;clearInterval(callTimer);
@@ -2538,6 +2821,7 @@ function startCallTimer(){
     const m=String(Math.floor(callSeconds/60)).padStart(2,'0'),s=String(callSeconds%60).padStart(2,'0');
     const str=`${m}:${s}`;callDuration.textContent=str;
     const mpd=$('miniPipDur');if(mpd)mpd.textContent=str;
+    const ctd=$('callTopDur');if(ctd)ctd.textContent=str;
   },1000);
 }
 aCallMuteBtn?.addEventListener('click',()=>{

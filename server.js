@@ -128,6 +128,15 @@ async function initDb() {
     UNIQUE KEY uq_acm (room_id, user_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
+  await q(`ALTER TABLE call_history ADD COLUMN IF NOT EXISTS deleted_for JSON DEFAULT NULL`);
+  try {
+    const [cols] = await pool.query(`
+      SELECT COUNT(*) AS c FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='call_history' AND COLUMN_NAME='deleted_for'
+    `);
+    if (!cols[0]?.c) await pool.query(`ALTER TABLE call_history ADD COLUMN deleted_for JSON DEFAULT NULL`);
+  } catch(e) {}
+
   // Clean up expired calls on startup
   await q(`DELETE FROM active_calls WHERE expires_at < NOW()`);
 
@@ -847,6 +856,23 @@ app.get('/api/live-location/chat/:chatKey', requireAuth, async (req, res) => {
 
 app.get('/api/calls', requireAuth, async (req, res) => {
   const me = req.user.id;
+  const filter = String(req.query.filter || 'all');
+  const fromDate = String(req.query.from || '').trim();
+  const toDate = String(req.query.to || '').trim();
+  const where = [
+    '(ch.caller_id=? OR ch.callee_id=?)',
+    'NOT JSON_CONTAINS(COALESCE(ch.deleted_for, JSON_ARRAY()), JSON_ARRAY(?))'
+  ];
+  const params = [me, me, me];
+
+  if (filter === 'missed') where.push('ch.status="missed"');
+  else if (filter === 'incoming') { where.push('ch.callee_id=?'); params.push(me); }
+  else if (filter === 'outgoing') { where.push('ch.caller_id=?'); params.push(me); }
+  else if (filter === 'video') where.push('ch.call_type="video"');
+  else if (filter === 'audio') where.push('ch.call_type="audio"');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) { where.push('DATE(ch.started_at) >= ?'); params.push(fromDate); }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(toDate)) { where.push('DATE(ch.started_at) <= ?'); params.push(toDate); }
+
   const [rows] = await pool.query(`
     SELECT ch.id, ch.caller_id, ch.callee_id, ch.group_id, ch.call_type,
            ch.is_group, ch.status, ch.started_at, ch.ended_at, ch.duration_s,
@@ -857,10 +883,36 @@ app.get('/api/calls', requireAuth, async (req, res) => {
     JOIN users caller ON caller.id = ch.caller_id
     LEFT JOIN users callee ON callee.id = ch.callee_id
     LEFT JOIN chat_groups cg ON cg.id = ch.group_id
-    WHERE ch.caller_id=? OR ch.callee_id=?
+    WHERE ${where.join(' AND ')}
     ORDER BY ch.started_at DESC LIMIT 100
-  `, [me, me]);
+  `, params);
   res.json(rows);
+});
+
+app.delete('/api/calls/:id', requireAuth, async (req, res) => {
+  const me = req.user.id;
+  const [r] = await pool.query(`
+    UPDATE call_history
+    SET deleted_for = JSON_ARRAY_APPEND(COALESCE(deleted_for, JSON_ARRAY()), '$', ?)
+    WHERE id=? AND (caller_id=? OR callee_id=?)
+      AND NOT JSON_CONTAINS(COALESCE(deleted_for, JSON_ARRAY()), JSON_ARRAY(?))
+  `, [me, req.params.id, me, me, me]);
+  res.json({ ok: true, affected: r.affectedRows });
+});
+
+app.delete('/api/calls', requireAuth, async (req, res) => {
+  const me = req.user.id;
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map(id => String(id).trim()).filter(Boolean).slice(0, 100)
+    : [];
+  if (!ids.length) return res.status(400).json({ error: 'No calls selected' });
+  const [r] = await pool.query(`
+    UPDATE call_history
+    SET deleted_for = JSON_ARRAY_APPEND(COALESCE(deleted_for, JSON_ARRAY()), '$', ?)
+    WHERE id IN (?) AND (caller_id=? OR callee_id=?)
+      AND NOT JSON_CONTAINS(COALESCE(deleted_for, JSON_ARRAY()), JSON_ARRAY(?))
+  `, [me, ids, me, me, me]);
+  res.json({ ok: true, affected: r.affectedRows });
 });
 
 // ══════════════════════════════════════════════
