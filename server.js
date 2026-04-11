@@ -1088,13 +1088,18 @@ function emitToUser(userId, event, data) {
 function emitToSocket(socketId, event, data) {
   if (socketId) io.to(socketId).emit(event, data);
 }
-function findCallRoomForUsers(a, b) {
+function findCallRoomForUsers(a, b, roomId = null) {
+  if (roomId && callRooms[roomId]) return callRooms[roomId];
   return Object.values(callRooms).find(room => room.members?.has(a) && room.members?.has(b));
 }
-function emitCallSignal(fromId, toId, event, data) {
-  const room = findCallRoomForUsers(fromId, toId);
+function emitCallSignal(fromId, toId, event, data, roomId = null, senderSocketId = null) {
+  const room = findCallRoomForUsers(fromId, toId, roomId);
+  if (room && senderSocketId) {
+    if (!room.memberSockets) room.memberSockets = new Map();
+    room.memberSockets.set(fromId, senderSocketId);
+  }
   const sid = room?.memberSockets?.get(toId);
-  if (sid) emitToSocket(sid, event, data);
+  if (sid && onlineUsers[toId]?.has(sid)) emitToSocket(sid, event, data);
   else emitToUser(toId, event, data);
 }
 
@@ -1571,18 +1576,20 @@ io.on('connection', async (socket) => {
           [room.histId]
         );
       }
-      emitToSocket(room.memberSockets?.get(toId), 'call-accepted', { from: username, callType });
-      if (!room.memberSockets?.get(toId)) emitTo(toId, 'call-accepted', { from: username, callType });
+      const payload = { from: username, callType, roomId };
+      const callerSid = room.memberSockets?.get(toId);
+      if (callerSid && onlineUsers[toId]?.has(callerSid)) emitToSocket(callerSid, 'call-accepted', payload);
+      else emitTo(toId, 'call-accepted', payload);
       for (const uid of existing) {
         if (uid !== myId) {
           const sid = room.memberSockets?.get(uid);
-          if (sid) emitToSocket(sid, 'please-connect', { to: username });
-          else emitTo(uid, 'please-connect', { to: username });
+          if (sid && onlineUsers[uid]?.has(sid)) emitToSocket(sid, 'please-connect', { to: username, roomId });
+          else emitTo(uid, 'please-connect', { to: username, roomId });
         }
       }
     } else {
-      emitTo(toId, 'call-accepted', { from: username, callType });
-      emitTo(toId, 'please-connect', { to: username });
+      emitTo(toId, 'call-accepted', { from: username, callType, roomId });
+      emitTo(toId, 'please-connect', { to: username, roomId });
     }
   });
 
@@ -1606,7 +1613,7 @@ io.on('connection', async (socket) => {
       await emitToGroupMembers(groupId, 'call-ended', { from: username }, true);
     } else {
       const toId = await getUserId(to);
-      if (toId) emitCallSignal(myId, toId, 'call-ended', { from: username });
+      if (toId) emitCallSignal(myId, toId, 'call-ended', { from: username, roomId }, roomId, socket.id);
     }
     if (roomId && callRooms[roomId]) {
       const room = callRooms[roomId];
@@ -1639,9 +1646,9 @@ io.on('connection', async (socket) => {
   });
 
   // FIXED: Hold call event
-  socket.on('call-hold', async ({ to, onHold }) => {
+  socket.on('call-hold', async ({ to, onHold, roomId }) => {
     const toId = await getUserId(to);
-    if (toId) emitCallSignal(myId, toId, 'call-hold', { from: username, onHold });
+    if (toId) emitCallSignal(myId, toId, 'call-hold', { from: username, onHold, roomId }, roomId, socket.id);
   });
 
   socket.on('add-to-call', async ({ to, callType, roomId }) => {
@@ -1700,33 +1707,33 @@ io.on('connection', async (socket) => {
   // FIXED: call-peer-reconnect forward
   socket.on('call-peer-reconnect', async ({ to, callType, roomId }) => {
     const toId = await getUserId(to);
-    if (toId) emitCallSignal(myId, toId, 'call-peer-reconnect', { from: username, callType, roomId });
+    if (toId) emitCallSignal(myId, toId, 'call-peer-reconnect', { from: username, callType, roomId }, roomId, socket.id);
   });
 
   // ── WebRTC Signaling ───────────────────────────────────────────────────────
-  socket.on('offer', async ({ to, offer }) => {
+  socket.on('offer', async ({ to, offer, roomId }) => {
     const t = await getUserId(to);
-    if (t) emitCallSignal(myId, t, 'offer', { from: username, offer });
+    if (t) emitCallSignal(myId, t, 'offer', { from: username, offer, roomId }, roomId, socket.id);
   });
 
-  socket.on('answer', async ({ to, answer }) => {
+  socket.on('answer', async ({ to, answer, roomId }) => {
     const t = await getUserId(to);
-    if (t) emitCallSignal(myId, t, 'answer', { from: username, answer });
+    if (t) emitCallSignal(myId, t, 'answer', { from: username, answer, roomId }, roomId, socket.id);
   });
 
-  socket.on('icecandidate', async ({ to, candidate }) => {
+  socket.on('icecandidate', async ({ to, candidate, roomId }) => {
     const t = await getUserId(to);
-    if (t) emitCallSignal(myId, t, 'icecandidate', { from: username, candidate });
+    if (t) emitCallSignal(myId, t, 'icecandidate', { from: username, candidate, roomId }, roomId, socket.id);
   });
 
-  socket.on('toggle-media', async ({ to, kind, enabled }) => {
+  socket.on('toggle-media', async ({ to, kind, enabled, roomId }) => {
     const t = await getUserId(to);
-    if (t) emitCallSignal(myId, t, 'peer-toggle-media', { from: username, kind, enabled });
+    if (t) emitCallSignal(myId, t, 'peer-toggle-media', { from: username, kind, enabled, roomId }, roomId, socket.id);
   });
 
-  socket.on('please-connect', async ({ to }) => {
+  socket.on('please-connect', async ({ to, roomId }) => {
     const t = await getUserId(to);
-    if (t) emitCallSignal(myId, t, 'please-connect', { to: username });
+    if (t) emitCallSignal(myId, t, 'please-connect', { to: username, roomId }, roomId, socket.id);
   });
 
   // ── Disconnect ─────────────────────────────────────────────────────────────

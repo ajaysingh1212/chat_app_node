@@ -704,7 +704,14 @@ function initSocket(){
     acceptVideoCallBtn.style.display=callType==='video'?'flex':'none';
     incomingCallScreen.style.display='flex';playRingtone(true);
   });
-  socket.on('call-accepted',async({from,callType})=>{hideOutgoingRing();await showActiveCallScreen(from,callType||currentCallType);await sendOfferTo(from);});
+  socket.on('call-accepted',async({from,callType,roomId})=>{
+    if(roomId&&currentCallRoomId&&roomId!==currentCallRoomId)return;
+    if(outgoingCallScreen.style.display!=='flex'&&(!roomId||roomId!==currentCallRoomId))return;
+    currentCallRoomId=roomId||currentCallRoomId;
+    hideOutgoingRing();
+    await showActiveCallScreen(from,callType||currentCallType);
+    await sendOfferTo(from);
+  });
   socket.on('call-rejected',({from})=>{hideOutgoingRing();showToast(`${from} declined the call`);});
   socket.on('call-ended',({from})=>{
     cleanupPeer(from);currentCallPeers=currentCallPeers.filter(u=>u!==from);
@@ -718,17 +725,27 @@ function initSocket(){
       }
     }
   });
-  socket.on('please-connect',async({to})=>{await sleep(120);await sendOfferTo(to);});
-  socket.on('offer',async({from,offer})=>{
+  socket.on('please-connect',async({to,roomId})=>{
+    if(roomId&&currentCallRoomId&&roomId!==currentCallRoomId)return;
+    currentCallRoomId=roomId||currentCallRoomId;
+    await sleep(120);await sendOfferTo(to);
+  });
+  socket.on('offer',async({from,offer,roomId})=>{
+    if(roomId&&currentCallRoomId&&roomId!==currentCallRoomId)return;
+    currentCallRoomId=roomId||currentCallRoomId;
     if(incomingCallScreen.style.display==='flex'){pendingOffers[from]=offer;return;}
     processOffer(from,offer);
   });
-  socket.on('answer',async({from,answer})=>{
+  socket.on('answer',async({from,answer,roomId})=>{
+    if(roomId&&currentCallRoomId&&roomId!==currentCallRoomId)return;
+    currentCallRoomId=roomId||currentCallRoomId;
     const pc=peerConnections[from];if(!pc||pc.signalingState!=='have-local-offer')return;
     await pc.setRemoteDescription(new RTCSessionDescription(answer));await flushIce(from);
   });
-  socket.on('icecandidate',async({from,candidate})=>{
+  socket.on('icecandidate',async({from,candidate,roomId})=>{
     if(!candidate||!from)return;
+    if(roomId&&currentCallRoomId&&roomId!==currentCallRoomId)return;
+    currentCallRoomId=roomId||currentCallRoomId;
     const pc=peerConnections[from];
     if(!pc?.remoteDescription?.type){if(!iceCandidateQueue[from])iceCandidateQueue[from]=[];iceCandidateQueue[from].push(candidate);return;}
     try{await pc.addIceCandidate(new RTCIceCandidate(candidate));}catch{}
@@ -2242,7 +2259,7 @@ iocHoldAccept?.addEventListener('click',async()=>{
   if(localStream)localStream.getTracks().forEach(t=>t.enabled=false);
   // Notify current peer they are on hold
   if(heldCallPeer){
-    socket.emit('call-hold',{to:heldCallPeer,onHold:true});
+    socket.emit('call-hold',{to:heldCallPeer,onHold:true,roomId:heldCallRoomId});
   }
   // Add hold overlay to active call screen
   const existingHold=activeCallScreen.querySelector('.hold-overlay');
@@ -2410,7 +2427,8 @@ function buildMiniPip(peerName) {
       socket.emit('toggle-media', {
         to: u,
         kind: 'audio',
-        enabled: !isMuted
+        enabled: !isMuted,
+        roomId: currentCallRoomId
       });
     });
   });
@@ -2525,7 +2543,7 @@ function startCallTimer(){
 aCallMuteBtn?.addEventListener('click',()=>{
   isMuted=!isMuted;localStream?.getAudioTracks().forEach(t=>t.enabled=!isMuted);
   aCallMuteBtn.classList.toggle('active',isMuted);
-  currentCallPeers.forEach(u=>socket.emit('toggle-media',{to:u,kind:'audio',enabled:!isMuted}));
+  currentCallPeers.forEach(u=>socket.emit('toggle-media',{to:u,kind:'audio',enabled:!isMuted,roomId:currentCallRoomId}));
 });
 aCallVideoBtn?.addEventListener('click', () => {
   isVideoOff = !isVideoOff;
@@ -2533,7 +2551,7 @@ aCallVideoBtn?.addEventListener('click', () => {
   aCallVideoBtn.classList.toggle('active', isVideoOff);
   const pip = document.getElementById('callLocalPip');
   if (pip) pip.style.display = isVideoOff ? 'none' : 'block';
-  currentCallPeers.forEach(u => socket.emit('toggle-media', { to: u, kind: 'video', enabled: !isVideoOff }));
+  currentCallPeers.forEach(u => socket.emit('toggle-media', { to: u, kind: 'video', enabled: !isVideoOff, roomId: currentCallRoomId }));
 });
 aCallAddBtn?.addEventListener('click',openAddToCallModal);
 function openAddToCallModal(){
@@ -2563,7 +2581,7 @@ function createPeerConnection(remoteUser){
       if(isCallMinimized){miniRemoteVideo.srcObject=e.streams[0];miniPipAvatar.style.display='none';}
     }
   };
-  pc.onicecandidate=e=>{if(e.candidate)socket.emit('icecandidate',{to:remoteUser,candidate:e.candidate});};
+  pc.onicecandidate=e=>{if(e.candidate)socket.emit('icecandidate',{to:remoteUser,candidate:e.candidate,roomId:currentCallRoomId});};
   pc.onconnectionstatechange=()=>{if(['disconnected','failed','closed'].includes(pc.connectionState))cleanupPeer(remoteUser);};
   peerConnections[remoteUser]=pc;iceCandidateQueue[remoteUser]=[];
   return pc;
@@ -2577,7 +2595,7 @@ async function sendOfferTo(user){
   await ensureIceServersLoaded();
   const pc=createPeerConnection(user);if(pc.signalingState!=='stable')return;
   const offer=await pc.createOffer({offerToReceiveAudio:true,offerToReceiveVideo:currentCallType==='video'});
-  await pc.setLocalDescription(offer);socket.emit('offer',{to:user,offer:pc.localDescription});
+  await pc.setLocalDescription(offer);socket.emit('offer',{to:user,offer:pc.localDescription,roomId:currentCallRoomId});
 }
 async function processOffer(from,offer){
   await ensureIceServersLoaded();
@@ -2585,7 +2603,7 @@ async function processOffer(from,offer){
   pc=createPeerConnection(from);
   await pc.setRemoteDescription(new RTCSessionDescription(offer));await flushIce(from);
   const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
-  socket.emit('answer',{to:from,answer:pc.localDescription});
+  socket.emit('answer',{to:from,answer:pc.localDescription,roomId:currentCallRoomId});
 }
 function addRemoteVideo(username,stream){
   let wrapper=$(`remote-${username}`);
