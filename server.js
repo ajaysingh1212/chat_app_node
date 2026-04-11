@@ -1570,12 +1570,6 @@ io.on('connection', async (socket) => {
       const existing = [...room.members];
       room.members.add(myId);
       room.memberSockets?.set(myId, socket.id);
-      if (room.histId) {
-        await pool.query(
-          'UPDATE call_history SET status="answered", started_at=NOW() WHERE id=?',
-          [room.histId]
-        );
-      }
       const payload = { from: username, callType, roomId };
       const callerSid = room.memberSockets?.get(toId);
       if (callerSid && onlineUsers[toId]?.has(callerSid)) emitToSocket(callerSid, 'call-accepted', payload);
@@ -1586,6 +1580,12 @@ io.on('connection', async (socket) => {
           if (sid && onlineUsers[uid]?.has(sid)) emitToSocket(sid, 'please-connect', { to: username, roomId });
           else emitTo(uid, 'please-connect', { to: username, roomId });
         }
+      }
+      if (room.histId) {
+        pool.query(
+          'UPDATE call_history SET status="ongoing", started_at=NOW() WHERE id=?',
+          [room.histId]
+        ).catch(e => console.error('call_history accept update:', e.message));
       }
     } else {
       emitTo(toId, 'call-accepted', { from: username, callType, roomId });
