@@ -454,7 +454,24 @@ document.querySelectorAll('.auth-tab').forEach(btn=>{
 });
 loginBtn.addEventListener('click',async()=>{
   loginError.textContent='';
-  try{const d=await api('POST','/api/login',{email:loginEmail.value.trim(),password:loginPassword.value});onAuthSuccess(d.token,d.user);}
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:loginEmail.value.trim(),password:loginPassword.value})});
+    const d=await r.json();
+    if(!r.ok){
+      if(d?.banned){
+        sessionStorage.setItem('ban_data',JSON.stringify({
+          reason:d.banReason,bannedUntil:d.bannedUntil,userId:d.userId,
+          username:d.username,email:d.email,unbanRequestStatus:d.unbanRequestStatus,
+          unbanRequestId:d.unbanRequestId
+        }));
+        localStorage.setItem('chatapp_user',JSON.stringify({id:d.userId,username:d.username,email:d.email}));
+        window.location.href='/ban';
+        return;
+      }
+      throw new Error(d.error||'Request failed');
+    }
+    onAuthSuccess(d.token,d.user);
+  }
   catch(e){loginError.textContent=e.message;}
 });
 registerBtn.addEventListener('click',async()=>{
@@ -466,6 +483,16 @@ registerBtn.addEventListener('click',async()=>{
 [regPassword,regEmail,regUsername].forEach(el=>el.addEventListener('keydown',e=>{if(e.key==='Enter')registerBtn.click();}));
 settingsLogout?.addEventListener('click',doLogout);
 function doLogout(){localStorage.removeItem('chatapp_token');localStorage.removeItem('chatapp_user');sessionStorage.removeItem('unlockedChats');location.reload();}
+function redirectToBanPage(data={}){
+  sessionStorage.setItem('ban_data',JSON.stringify({
+    reason:data.reason||data.message||'Your account has been banned.',
+    bannedUntil:data.bannedUntil||null,
+    userId:myUser?.id,
+    username:myUser?.username,
+    email:myUser?.email
+  }));
+  window.location.href='/ban';
+}
 
 function onAuthSuccess(token,user){
   myToken=token;
@@ -486,6 +513,8 @@ function onAuthSuccess(token,user){
   initSocket();
   ensureIceServersLoaded();
   loadInitialData();
+  ensureUserAdsUi();
+  loadInAppAds();
 }
 window.addEventListener('load',()=>{
   const token=localStorage.getItem('chatapp_token'),user=localStorage.getItem('chatapp_user');
@@ -597,6 +626,200 @@ async function loadInitialData(){
   }catch(e){console.error('loadInitialData:',e);}
 }
 
+function ensureUserAdsUi(){
+  if(document.getElementById('homeAdsStrip'))return;
+  const style=document.createElement('style');
+  style.textContent=`
+    .inapp-ad-strip{display:none;padding:10px 12px;border-bottom:1px solid #223045;background:#101a25;gap:10px;align-items:center}
+    .inapp-ad-strip.show{display:flex}
+    .inapp-ad-media{width:58px;height:58px;border-radius:8px;object-fit:cover;background:#1a2433;flex-shrink:0}
+    .inapp-ad-body{min-width:0;flex:1}.inapp-ad-title{font-size:13px;font-weight:700;color:#d8e4f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .inapp-ad-desc{font-size:11px;color:#6a8098;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+    .inapp-ad-cta{border:1px solid #00bfa5;background:rgba(0,191,165,.12);color:#00bfa5;border-radius:7px;padding:7px 9px;font-size:11px;font-weight:700;cursor:pointer}
+    .user-ads-entry{margin-top:8px;padding:10px 14px;border:1px solid #223045;border-radius:8px;background:#131d29;color:#d8e4f0;width:100%;text-align:left;cursor:pointer}
+    .user-ads-modal{position:fixed;inset:0;z-index:980;background:rgba(0,0,0,.76);display:none;align-items:center;justify-content:center;padding:16px}
+    .user-ads-card{width:min(760px,96vw);max-height:92vh;overflow:auto;background:#111a24;border:1px solid #223045;border-radius:14px;padding:18px}
+    .user-ads-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.user-ads-head h3{font-size:18px}
+    .user-ads-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.user-ads-field label{display:block;font-size:11px;color:#6a8098;margin-bottom:4px}
+    .user-ads-field input,.user-ads-field textarea,.user-ads-field select{width:100%;background:#172231;border:1px solid #2a3d56;color:#d8e4f0;border-radius:8px;padding:10px;font-family:var(--font)}
+    .user-ads-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}.user-ads-checks{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;color:#d8e4f0;font-size:12px}
+    @media(max-width:700px){.user-ads-grid{grid-template-columns:1fr}.user-ads-actions{flex-direction:column}}
+  `;
+  document.head.appendChild(style);
+  const strip=document.createElement('div');
+  strip.id='homeAdsStrip';
+  strip.className='inapp-ad-strip';
+  strip.innerHTML='<img class="inapp-ad-media" id="homeAdMedia" alt=""><div class="inapp-ad-body"><div class="inapp-ad-title" id="homeAdTitle"></div><div class="inapp-ad-desc" id="homeAdDesc"></div></div><button class="inapp-ad-cta" id="homeAdCta">Open</button>';
+  const side=document.querySelector('.sidebar')||document.querySelector('aside');
+  const insertBefore=document.getElementById('chatList')||document.querySelector('.chat-list');
+  if(side&&insertBefore)side.insertBefore(strip,insertBefore);else document.body.appendChild(strip);
+  const adBtn=document.createElement('button');
+  adBtn.className='user-ads-entry';
+  adBtn.textContent='Create / manage ads';
+  adBtn.onclick=()=>openUserAdsPanel();
+  document.getElementById('panelSettings')?.querySelector('.settings-list')?.appendChild(adBtn);
+}
+
+async function loadInAppAds(){
+  try{
+    const placement=activeChat?.type?'chat':'home';
+    const ads=await api('GET',`/api/all-ads?placement=${placement}`);
+    const ad=ads?.[0];
+    const strip=document.getElementById('homeAdsStrip');
+    if(!strip||!ad){if(strip)strip.classList.remove('show');return;}
+    document.getElementById('homeAdTitle').textContent=ad.title||'Sponsored';
+    document.getElementById('homeAdDesc').textContent=ad.description||ad.advertiser_name||'';
+    const media=document.getElementById('homeAdMedia');
+    media.src=ad.media_url||'';
+    media.style.display=ad.media_url?'block':'none';
+    const cta=document.getElementById('homeAdCta');
+    cta.textContent=ad.cta_text||'Open';
+    cta.onclick=()=>{
+      trackAdEvent(ad,'click',placement);
+      if(ad.cta_url)window.open(ad.cta_url,'_blank');
+    };
+    strip.classList.add('show');
+    trackAdEvent(ad,'impression',placement);
+  }catch(e){}
+}
+
+function trackAdEvent(ad,eventType,placement){
+  const endpoint=ad.source==='user'?`/api/user-ads/${ad.id}/event`:`/api/ads/${ad.id}/event`;
+  fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eventType,placement,userId:myUser?.id||null})}).catch(()=>{});
+}
+
+function openUserAdsPanel(){
+  ensureUserAdsModal();
+  document.getElementById('userAdsModal').style.display='flex';
+  refreshUserAdsBalance();
+}
+
+function ensureUserAdsModal(){
+  if(document.getElementById('userAdsModal'))return;
+  const modal=document.createElement('div');
+  modal.id='userAdsModal';
+  modal.className='user-ads-modal';
+  const today=new Date().toISOString().slice(0,10);
+  const end=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
+  modal.innerHTML=`
+    <div class="user-ads-card">
+      <div class="user-ads-head">
+        <h3>Create ad campaign</h3>
+        <button class="rp-close" id="closeUserAdsModal">x</button>
+      </div>
+      <div style="display:flex;gap:10px;align-items:end;margin-bottom:14px;flex-wrap:wrap">
+        <div style="font-size:13px;color:#d8e4f0">Balance: <strong id="userAdsBalance">0</strong></div>
+        <input id="userAdsTopupAmount" type="number" min="1" placeholder="Amount" style="width:120px;background:#172231;border:1px solid #2a3d56;color:#d8e4f0;border-radius:8px;padding:9px">
+        <button class="inapp-ad-cta" id="userAdsTopupBtn">Add balance</button>
+      </div>
+      <div class="user-ads-grid">
+        <div class="user-ads-field"><label>Title</label><input id="uAdTitle" maxlength="120"></div>
+        <div class="user-ads-field"><label>Advertiser name</label><input id="uAdAdvertiser" maxlength="120"></div>
+        <div class="user-ads-field" style="grid-column:1/-1"><label>Description</label><textarea id="uAdDesc" rows="2"></textarea></div>
+        <div class="user-ads-field"><label>Media</label><input id="uAdMedia" type="file" accept="image/*,video/*"></div>
+        <div class="user-ads-field"><label>CTA URL</label><input id="uAdCtaUrl" type="url" placeholder="https://..."></div>
+        <div class="user-ads-field"><label>Budget</label><input id="uAdBudget" type="number" min="0" value="100"></div>
+        <div class="user-ads-field"><label>Daily budget</label><input id="uAdDailyBudget" type="number" min="0" value="50"></div>
+        <div class="user-ads-field"><label>Cost per click</label><input id="uAdCpc" type="number" min="0" step="0.01" value="1"></div>
+        <div class="user-ads-field"><label>Cost per impression</label><input id="uAdCpm" type="number" min="0" step="0.01" value="0.10"></div>
+        <div class="user-ads-field"><label>Start date</label><input id="uAdStart" type="date" value="${today}"></div>
+        <div class="user-ads-field"><label>End date</label><input id="uAdEnd" type="date" value="${end}"></div>
+        <div class="user-ads-field"><label>Gender</label><select id="uAdGender"><option value="all">All</option><option value="male">Male</option><option value="female">Female</option></select></div>
+        <div class="user-ads-field"><label>Location</label><input id="uAdLocation" placeholder="City, state, country"></div>
+      </div>
+      <div class="user-ads-checks">
+        <label><input id="uAdPlaceStatus" type="checkbox" checked> Status</label>
+        <label><input id="uAdPlaceChat" type="checkbox"> Chat</label>
+        <label><input id="uAdPlaceHome" type="checkbox" checked> Home</label>
+      </div>
+      <div id="uAdPreview" style="margin-top:12px;font-size:12px;color:#6a8098"></div>
+      <div class="user-ads-actions">
+        <button class="fpc-cancel" id="uAdCancelBtn">Cancel</button>
+        <button class="media-preview-send" id="uAdSubmitBtn">Submit for approval</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('closeUserAdsModal').onclick=()=>modal.style.display='none';
+  document.getElementById('uAdCancelBtn').onclick=()=>modal.style.display='none';
+  modal.addEventListener('click',e=>{if(e.target===modal)modal.style.display='none';});
+  document.getElementById('userAdsTopupBtn').onclick=topupUserAdsBalance;
+  document.getElementById('uAdSubmitBtn').onclick=submitUserAdCampaign;
+  document.getElementById('uAdMedia').onchange=e=>{
+    const f=e.target.files?.[0];
+    document.getElementById('uAdPreview').textContent=f?`Selected: ${f.name}`:'';
+  };
+}
+
+async function refreshUserAdsBalance(){
+  try{
+    const b=await api('GET','/api/ads/balance');
+    document.getElementById('userAdsBalance').textContent='₹'+Number(b.balance||0).toFixed(2);
+  }catch(e){}
+}
+
+async function loadRazorpayScript(){
+  if(window.Razorpay)return;
+  await new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src='https://checkout.razorpay.com/v1/checkout.js';
+    s.onload=resolve;s.onerror=()=>reject(new Error('Razorpay script failed to load'));
+    document.head.appendChild(s);
+  });
+}
+
+async function topupUserAdsBalance(){
+  const amount=Number(document.getElementById('userAdsTopupAmount').value||0);
+  if(amount<1)return showToast('Enter amount first');
+  try{
+    await loadRazorpayScript();
+    const order=await api('POST','/api/payment/create-order',{amount,currency:'INR'});
+    const rz=new Razorpay({
+      key:order.keyId,amount:order.amount,currency:order.currency,order_id:order.orderId,
+      name:'ChatApp Ads',description:'Ad wallet top-up',
+      handler:async resp=>{
+        await api('POST','/api/payment/verify',{orderId:resp.razorpay_order_id,paymentId:resp.razorpay_payment_id,signature:resp.razorpay_signature,amount});
+        showToast('Balance added');
+        refreshUserAdsBalance();
+      },
+      prefill:{name:myUser?.username||'',email:myUser?.email||''}
+    });
+    rz.open();
+  }catch(e){showToast(e.message);}
+}
+
+async function submitUserAdCampaign(){
+  try{
+    let mediaUrl='',mediaType='image';
+    const file=document.getElementById('uAdMedia').files?.[0];
+    if(file){
+      const fd=new FormData();fd.append('file',file);
+      const r=await fetch('/api/upload/media',{method:'POST',headers:{Authorization:'Bearer '+myToken},body:fd});
+      const d=await r.json();if(!r.ok)throw new Error(d.error||'Upload failed');
+      mediaUrl=d.url;mediaType=(d.type||file.type||'').startsWith('video/')?'video':'image';
+    }
+    await api('POST','/api/user-ads',{
+      title:document.getElementById('uAdTitle').value.trim(),
+      description:document.getElementById('uAdDesc').value.trim(),
+      mediaUrl,mediaType,ctaText:'Learn More',ctaUrl:document.getElementById('uAdCtaUrl').value.trim(),
+      placementStatus:document.getElementById('uAdPlaceStatus').checked?1:0,
+      placementChat:document.getElementById('uAdPlaceChat').checked?1:0,
+      placementHome:document.getElementById('uAdPlaceHome').checked?1:0,
+      budget:Number(document.getElementById('uAdBudget').value||0),
+      dailyBudget:Number(document.getElementById('uAdDailyBudget').value||0),
+      costPerClick:Number(document.getElementById('uAdCpc').value||0),
+      costPerImpression:Number(document.getElementById('uAdCpm').value||0),
+      startDate:document.getElementById('uAdStart').value,
+      endDate:document.getElementById('uAdEnd').value,
+      targetGender:document.getElementById('uAdGender').value,
+      targetLocation:document.getElementById('uAdLocation').value.trim(),
+      advertiserName:document.getElementById('uAdAdvertiser').value.trim()||myUser?.username
+    });
+    showToast('Ad submitted for admin approval');
+    document.getElementById('userAdsModal').style.display='none';
+    refreshUserAdsBalance();
+  }catch(e){showToast(e.message);}
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
    SOCKET INIT
 ════════════════════════════════════════════════════════════════════════════ */
@@ -613,6 +836,9 @@ function initSocket(){
       socket.emit('rejoin-call',{roomId:currentCallRoomId,callType:currentCallType});
     }
   });
+  socket.on('account-banned',data=>redirectToBanPage(data));
+  socket.on('account-deleted',()=>doLogout());
+  socket.on('ad-updated',()=>loadInAppAds());
 
   socket.on('online-users',(onlineIds)=>{
     onlineIds.forEach(uid=>{
@@ -1065,6 +1291,7 @@ function updatePipStatus(isOnline,lastSeen){
 ════════════════════════════════════════════════════════════════════════════ */
 async function openChat({type,id,name,isGroup}){
   activeChat={type,id,name,isGroup};
+  loadInAppAds();
   const key=chatKey(type,id);ensureChat(key);
   if(chats[key])chats[key].unread=0;
   showMain();closeProfilePanel();

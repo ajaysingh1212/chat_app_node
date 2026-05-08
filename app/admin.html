@@ -1,0 +1,1861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatApp — Admin Panel</title>
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════
+     AUTH SCREEN
+══════════════════════════════════════════════════════════ -->
+<div id="adminAuthScreen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">💬</div>
+      <div>
+        <div class="auth-logo-text">Chat<span>App</span></div>
+        <div class="auth-subtitle">Administration Portal</div>
+      </div>
+    </div>
+    <div class="auth-heading">Welcome back</div>
+    <div class="auth-desc">Sign in to access your admin dashboard. Unauthorised access is prohibited.</div>
+    <div class="form-group">
+      <label class="form-label">Email Address</label>
+      <input type="email" class="form-input" id="adminEmail" placeholder="admin@chatapp.com" autocomplete="email">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Password</label>
+      <input type="password" class="form-input" id="adminPassword" placeholder="••••••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn-primary" id="adminLoginBtn">
+      Sign In to Dashboard
+    </button>
+    <div class="auth-error" id="adminLoginError"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     SIDEBAR OVERLAY (mobile)
+══════════════════════════════════════════════════════════ -->
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+<!-- ══════════════════════════════════════════════════════════
+     ADMIN APP
+══════════════════════════════════════════════════════════ -->
+<div id="adminApp">
+
+  <!-- SIDEBAR -->
+  <aside class="admin-sidebar" id="adminSidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-brand-icon">💬</div>
+      <div>
+        <div class="sidebar-brand-name">ChatApp <span class="sidebar-brand-badge">ADMIN</span></div>
+      </div>
+    </div>
+
+    <div class="sidebar-admin-info">
+      <div class="sidebar-admin-avatar" id="sidebarAdminAvatar">A</div>
+      <div>
+        <div class="sidebar-admin-name" id="sidebarAdminName">Loading...</div>
+        <div class="sidebar-admin-role" id="sidebarAdminRole">superadmin</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Overview</div>
+      <div class="nav-item active" data-panel="dashboard">
+        <span class="nav-item-icon">📊</span> Dashboard
+      </div>
+      <div class="nav-item" data-panel="activity">
+        <span class="nav-item-icon">📋</span> Activity Log
+      </div>
+
+      <div class="nav-section-label">Users</div>
+      <div class="nav-item" data-panel="users">
+        <span class="nav-item-icon">👥</span> All Users
+      </div>
+      <div class="nav-item" data-panel="unban">
+        <span class="nav-item-icon">🔓</span> Unban Requests
+        <span class="nav-item-badge" id="unbanBadge" style="display:none">0</span>
+      </div>
+
+      <div class="nav-section-label">Monetization</div>
+      <div class="nav-item" data-panel="ads">
+        <span class="nav-item-icon">📢</span> Advertisements
+      </div>
+      <div class="nav-item" data-panel="api-keys">
+        <span class="nav-item-icon">🔑</span> API Keys
+      </div>
+
+      <div class="nav-section-label">Administration</div>
+      <div class="nav-item" data-panel="roles">
+        <span class="nav-item-icon">🛡</span> Roles & Permissions
+      </div>
+      <div class="nav-item" data-panel="admin-users">
+        <span class="nav-item-icon">👤</span> Admin Users
+      </div>
+      <div class="nav-item" data-panel="settings">
+        <span class="nav-item-icon">⚙️</span> App Settings
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button class="sidebar-logout-btn" id="adminLogoutBtn">
+        <span>🚪</span> Sign Out
+      </button>
+    </div>
+  </aside>
+
+  <!-- MAIN AREA -->
+  <div class="admin-main">
+    <!-- HEADER -->
+    <header class="admin-header">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="mobile-sidebar-toggle" id="mobileSidebarToggle">☰</button>
+        <div class="admin-header-title" id="headerTitle">Dashboard</div>
+      </div>
+      <div class="admin-header-actions">
+        <div class="header-icon-btn" id="headerNotifBtn" title="Unban Requests">
+          🔔
+          <div class="header-notif-badge" id="notifBadge" style="display:none">0</div>
+        </div>
+        <div class="header-icon-btn" title="My Profile" id="headerProfileBtn">👤</div>
+      </div>
+    </header>
+
+    <!-- CONTENT -->
+    <div class="admin-content">
+
+      <!-- ══ DASHBOARD ══ -->
+      <div class="admin-panel active" id="panel-dashboard">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Dashboard</div>
+            <div class="page-subtitle">Real-time overview of your ChatApp platform</div>
+          </div>
+          <button class="btn btn-outline" onclick="loadDashboard()">↻ Refresh</button>
+        </div>
+
+        <div class="stats-grid" id="statsGrid">
+          <div class="stat-card green skeleton" style="height:110px"></div>
+          <div class="stat-card blue skeleton" style="height:110px"></div>
+          <div class="stat-card red skeleton" style="height:110px"></div>
+          <div class="stat-card yellow skeleton" style="height:110px"></div>
+          <div class="stat-card purple skeleton" style="height:110px"></div>
+          <div class="stat-card green skeleton" style="height:110px"></div>
+        </div>
+
+        <div class="grid-2" style="margin-bottom:20px">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">📈 User Growth (30 days)</div>
+            </div>
+            <div class="card-body">
+              <div class="mini-chart" id="userGrowthChart" style="height:80px"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">💬 Messages (7 days)</div>
+            </div>
+            <div class="card-body">
+              <div class="mini-chart" id="msgChart" style="height:80px"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🏆 Top Active Users</div>
+          </div>
+          <div class="card-body" style="padding:0">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>User</th>
+                  <th>Status</th>
+                  <th>Messages</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="topUsersBody">
+                <tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ USERS ══ -->
+      <div class="admin-panel" id="panel-users">
+        <div class="page-header">
+          <div>
+            <div class="page-title">User Management</div>
+            <div class="page-subtitle">Manage all registered users, ban, unban, and edit profiles</div>
+          </div>
+          <button class="btn btn-accent" onclick="openUserCreateModal()">+ Add Admin User</button>
+        </div>
+
+        <div class="card">
+          <div class="toolbar">
+            <div class="toolbar-search">
+              <span class="toolbar-search-icon">🔍</span>
+              <input type="text" id="userSearchInput" placeholder="Search by name, email or phone..." oninput="debounceUserSearch()">
+            </div>
+            <select class="toolbar-select" id="userStatusFilter" onchange="loadUsers()">
+              <option value="">All Statuses</option>
+              <option value="active">Active</option>
+              <option value="banned">Banned</option>
+              <option value="suspended">Suspended</option>
+            </select>
+            <select class="toolbar-select" id="userSortSelect" onchange="loadUsers()">
+              <option value="created_at">Newest First</option>
+              <option value="username">Name A-Z</option>
+              <option value="last_seen">Last Seen</option>
+            </select>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Status</th>
+                  <th>Online</th>
+                  <th>Messages</th>
+                  <th>Contacts</th>
+                  <th>Joined</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="usersTableBody">
+                <tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)"><div class="spinner" style="margin:0 auto"></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination" id="userPagination"></div>
+        </div>
+      </div>
+
+      <!-- ══ UNBAN REQUESTS ══ -->
+      <div class="admin-panel" id="panel-unban">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Unban Requests</div>
+            <div class="page-subtitle">Review and process user unban appeals</div>
+          </div>
+        </div>
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="loadUnbanRequests('pending', this)">⏳ Pending</button>
+          <button class="tab-btn" onclick="loadUnbanRequests('approved', this)">✅ Approved</button>
+          <button class="tab-btn" onclick="loadUnbanRequests('rejected', this)">❌ Rejected</button>
+        </div>
+        <div id="unbanList"></div>
+      </div>
+
+      <!-- ══ ADS ══ -->
+      <div class="admin-panel" id="panel-ads">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Advertisements</div>
+            <div class="page-subtitle">Create, manage and track your ad campaigns</div>
+          </div>
+          <button class="btn btn-accent" onclick="openAdModal()">+ Create Campaign</button>
+        </div>
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="loadAds('', this)">All Ads</button>
+          <button class="tab-btn" onclick="loadAds('active', this)">🟢 Active</button>
+          <button class="tab-btn" onclick="loadAds('paused', this)">⏸ Paused</button>
+          <button class="tab-btn" onclick="loadAds('draft', this)">📝 Draft</button>
+          <button class="tab-btn" onclick="loadAds('ended', this)">🔴 Ended</button>
+          <button class="tab-btn" onclick="loadUserSubmittedAds('pending', this)">User Pending</button>
+        </div>
+        <div class="ad-card-grid" id="adsGrid">
+          <div style="text-align:center;padding:48px;color:var(--text-muted);grid-column:1/-1">Loading campaigns...</div>
+        </div>
+      </div>
+
+      <!-- ══ API KEYS ══ -->
+      <div class="admin-panel" id="panel-api-keys">
+        <div class="page-header">
+          <div>
+            <div class="page-title">API Keys</div>
+            <div class="page-subtitle">Issue and manage API access for third-party integrations</div>
+          </div>
+          <button class="btn btn-accent" onclick="openApiKeyModal()">+ Issue New Key</button>
+        </div>
+        <div id="apiKeysList">
+          <div style="text-align:center;padding:48px;color:var(--text-muted)">Loading...</div>
+        </div>
+      </div>
+
+      <!-- ══ ROLES ══ -->
+      <div class="admin-panel" id="panel-roles">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Roles & Permissions</div>
+            <div class="page-subtitle">Define and manage access control roles</div>
+          </div>
+          <button class="btn btn-accent" onclick="openRoleModal()">+ Create Role</button>
+        </div>
+        <div id="rolesList"></div>
+      </div>
+
+      <!-- ══ ADMIN USERS ══ -->
+      <div class="admin-panel" id="panel-admin-users">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Admin Users</div>
+            <div class="page-subtitle">Manage staff who have access to this dashboard</div>
+          </div>
+          <button class="btn btn-accent" onclick="openAdminUserModal()">+ Add Admin</button>
+        </div>
+        <div class="card">
+          <div style="overflow-x:auto">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Admin</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Last Login</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="adminUsersBody">
+                <tr><td colspan="5" style="text-align:center;padding:40px;color:var(--text-muted)">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ SETTINGS ══ -->
+      <div class="admin-panel" id="panel-settings">
+        <div class="page-header">
+          <div>
+            <div class="page-title">App Settings</div>
+            <div class="page-subtitle">Configure global application settings</div>
+          </div>
+          <button class="btn btn-accent" onclick="saveSettings()">💾 Save Settings</button>
+        </div>
+        <div class="card">
+          <div class="card-body" id="settingsBody">Loading...</div>
+        </div>
+      </div>
+
+      <!-- ══ ACTIVITY ══ -->
+      <div class="admin-panel" id="panel-activity">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Activity Log</div>
+            <div class="page-subtitle">All admin actions are tracked here for audit purposes</div>
+          </div>
+          <button class="btn btn-outline" onclick="loadActivity()">↻ Refresh</button>
+        </div>
+        <div class="card">
+          <div class="card-body" id="activityList">Loading...</div>
+        </div>
+      </div>
+
+    </div><!-- /admin-content -->
+  </div><!-- /admin-main -->
+</div><!-- /adminApp -->
+
+
+<!-- ══════════════════════════════════════════════════════════
+     MODALS
+══════════════════════════════════════════════════════════ -->
+
+<!-- User Detail Modal -->
+<div class="modal-overlay" id="userDetailModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="userDetailTitle">User Details</div>
+      <button class="modal-close" onclick="closeModal('userDetailModal')">✕</button>
+    </div>
+    <div class="modal-body" id="userDetailBody"></div>
+    <div class="modal-footer" id="userDetailFooter"></div>
+  </div>
+</div>
+
+<!-- Ban User Modal -->
+<div class="modal-overlay" id="banModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">🚫 Ban User</div>
+      <button class="modal-close" onclick="closeModal('banModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:16px">
+        <div class="user-cell" id="banModalUser"></div>
+      </div>
+      <div class="field-group" style="margin-bottom:14px">
+        <label class="field-label">Ban Type</label>
+        <select class="field-select" id="banType">
+          <option value="permanent">Permanent</option>
+          <option value="temporary">Temporary</option>
+        </select>
+      </div>
+      <div class="field-group" style="margin-bottom:14px" id="banUntilWrap">
+        <label class="field-label">Banned Until</label>
+        <input type="datetime-local" class="field-input" id="banUntil">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Reason</label>
+        <textarea class="field-textarea" id="banReason" placeholder="Reason for banning this user..." style="min-height:80px"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('banModal')">Cancel</button>
+      <button class="btn btn-danger" id="banConfirmBtn">🚫 Ban User</button>
+    </div>
+  </div>
+</div>
+
+<!-- Unban Review Modal -->
+<div class="modal-overlay" id="unbanReviewModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">Review Unban Request</div>
+      <button class="modal-close" onclick="closeModal('unbanReviewModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="unbanReviewBody"></div>
+      <div class="field-group" style="margin-top:14px">
+        <label class="field-label">Review Note (optional)</label>
+        <textarea class="field-textarea" id="unbanReviewNote" placeholder="Note to accompany this decision..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('unbanReviewModal')">Cancel</button>
+      <button class="btn btn-danger" id="rejectUnbanBtn">❌ Reject</button>
+      <button class="btn btn-success" id="approveUnbanBtn">✅ Approve</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ad Create/Edit Modal -->
+<div class="modal-overlay" id="adModal">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="adModalTitle">📢 Create Campaign</div>
+      <button class="modal-close" onclick="closeModal('adModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid-2" style="gap:24px">
+        <!-- Left: Form -->
+        <div>
+          <div class="settings-section">
+            <div class="settings-section-title">Basic Info</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="field-group">
+                <label class="field-label">Campaign Title *</label>
+                <input type="text" class="field-input" id="adTitle" placeholder="e.g. Summer Sale — 50% Off">
+              </div>
+              <div class="field-group">
+                <label class="field-label">Description</label>
+                <textarea class="field-textarea" id="adDesc" placeholder="Short description of the ad..."></textarea>
+              </div>
+              <div class="form-row">
+                <div class="field-group">
+                  <label class="field-label">Ad Type</label>
+                  <select class="field-select" id="adType" onchange="updateAdPreview()">
+                    <option value="banner">Banner</option>
+                    <option value="interstitial">Interstitial</option>
+                    <option value="status">Status Ad</option>
+                    <option value="story">Story</option>
+                    <option value="chat">Chat Ad</option>
+                    <option value="notification">Notification</option>
+                    <option value="popup">Popup</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label class="field-label">Media Type</label>
+                  <select class="field-select" id="adMediaType">
+                    <option value="image">Image</option>
+                    <option value="video">Video</option>
+                    <option value="gif">GIF</option>
+                  </select>
+                </div>
+              </div>
+              <div class="field-group">
+                <label class="field-label">Media URL</label>
+                <input type="url" class="field-input" id="adMediaUrl" placeholder="https://..." oninput="updateAdPreview()">
+              </div>
+              <div style="display:flex;gap:8px;align-items:center">
+                <span style="font-size:12px;color:var(--text-muted)">— or upload —</span>
+                <input type="file" id="adMediaFile" accept="image/*,video/*" style="display:none" onchange="handleAdMediaUpload(this)">
+                <button class="btn btn-outline btn-sm" onclick="document.getElementById('adMediaFile').click()">📎 Upload Media</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">CTA & Links</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="form-row">
+                <div class="field-group">
+                  <label class="field-label">CTA Button Text</label>
+                  <input type="text" class="field-input" id="adCtaText" value="Learn More" oninput="updateAdPreview()">
+                </div>
+                <div class="field-group">
+                  <label class="field-label">CTA URL</label>
+                  <input type="url" class="field-input" id="adCtaUrl" placeholder="https://...">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Placement</div>
+            <div class="placement-grid">
+              <label class="placement-item" onclick="this.classList.toggle('checked');updateAdPreview()">
+                <input type="checkbox" id="placementStatus" checked>
+                <span class="placement-item-icon">📊</span>
+                <div>
+                  <div class="placement-item-label">Status</div>
+                  <div class="placement-item-desc">Below status stories</div>
+                </div>
+              </label>
+              <label class="placement-item" onclick="this.classList.toggle('checked')">
+                <input type="checkbox" id="placementChat">
+                <span class="placement-item-icon">💬</span>
+                <div>
+                  <div class="placement-item-label">Chat List</div>
+                  <div class="placement-item-desc">Inside conversation list</div>
+                </div>
+              </label>
+              <label class="placement-item" onclick="this.classList.toggle('checked')">
+                <input type="checkbox" id="placementCalls">
+                <span class="placement-item-icon">📞</span>
+                <div>
+                  <div class="placement-item-label">Calls Tab</div>
+                  <div class="placement-item-desc">In call history screen</div>
+                </div>
+              </label>
+              <label class="placement-item" onclick="this.classList.toggle('checked')">
+                <input type="checkbox" id="placementHome">
+                <span class="placement-item-icon">🏠</span>
+                <div>
+                  <div class="placement-item-label">Home Screen</div>
+                  <div class="placement-item-desc">On app home/lobby</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Schedule & Budget</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="form-row">
+                <div class="field-group">
+                  <label class="field-label">Start Date *</label>
+                  <input type="date" class="field-input" id="adStartDate">
+                </div>
+                <div class="field-group">
+                  <label class="field-label">End Date *</label>
+                  <input type="date" class="field-input" id="adEndDate">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="field-group">
+                  <label class="field-label">Total Budget ($)</label>
+                  <input type="number" class="field-input" id="adBudget" value="0" min="0" step="0.01">
+                </div>
+                <div class="field-group">
+                  <label class="field-label">Daily Budget ($)</label>
+                  <input type="number" class="field-input" id="adDailyBudget" value="0" min="0" step="0.01">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="field-group">
+                  <label class="field-label">Cost per Click ($)</label>
+                  <input type="number" class="field-input" id="adCpc" value="0" min="0" step="0.0001">
+                </div>
+                <div class="field-group">
+                  <label class="field-label">Cost per 1000 Impressions ($)</label>
+                  <input type="number" class="field-input" id="adCpm" value="0" min="0" step="0.0001">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Targeting</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="form-row">
+                <div class="field-group">
+                  <label class="field-label">Gender</label>
+                  <select class="field-select" id="adTargetGender">
+                    <option value="all">All</option>
+                    <option value="male">Male</option>
+                    <option value="female">Female</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label class="field-label">Age Range</label>
+                  <div style="display:flex;gap:8px">
+                    <input type="number" class="field-input" id="adAgeMin" value="13" min="13" max="65" placeholder="Min">
+                    <input type="number" class="field-input" id="adAgeMax" value="65" min="13" max="100" placeholder="Max">
+                  </div>
+                </div>
+              </div>
+              <div class="field-group">
+                <label class="field-label">Target Locations (comma separated)</label>
+                <input type="text" class="field-input" id="adTargetLocation" placeholder="India, USA, UK...">
+              </div>
+              <div class="field-group">
+                <label class="field-label">Target Interests</label>
+                <input type="text" class="field-input" id="adTargetInterests" placeholder="Technology, Fashion, Sports...">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-section-title">Advertiser Info</div>
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div class="form-row">
+                <div class="field-group">
+                  <label class="field-label">Advertiser Name</label>
+                  <input type="text" class="field-input" id="adAdvertiserName" placeholder="Acme Corp" oninput="updateAdPreview()">
+                </div>
+                <div class="field-group">
+                  <label class="field-label">Contact Email</label>
+                  <input type="email" class="field-input" id="adAdvertiserEmail" placeholder="contact@brand.com">
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="field-group">
+                  <label class="field-label">Status</label>
+                  <select class="field-select" id="adStatus">
+                    <option value="draft">Draft</option>
+                    <option value="pending_review">Pending Review</option>
+                    <option value="active">Active</option>
+                    <option value="paused">Paused</option>
+                  </select>
+                </div>
+                <div class="field-group">
+                  <label class="field-label">Priority (1=low, 10=high)</label>
+                  <input type="number" class="field-input" id="adPriority" value="1" min="1" max="10">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Preview -->
+        <div>
+          <div class="ad-preview-wrap">
+            <div class="ad-preview-title">📱 Ad Preview</div>
+            <div class="ad-preview-tabs">
+              <button class="ad-preview-tab active" onclick="switchAdPreview('status',this)">Status</button>
+              <button class="ad-preview-tab" onclick="switchAdPreview('chat',this)">Chat List</button>
+            </div>
+            <div class="ad-preview-device">
+              <!-- Status preview -->
+              <div id="prevStatus">
+                <div class="prev-status-ad">
+                  <div class="prev-ad-label">Sponsored</div>
+                  <div id="prevAdImgWrap" style="width:100%;height:140px;background:var(--bg4);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:13px">
+                    No media
+                  </div>
+                  <div class="prev-ad-body">
+                    <div class="prev-ad-advertiser">
+                      <div class="prev-ad-advertiser-dot"></div>
+                      <span id="prevAdvert">Your Brand</span>
+                    </div>
+                    <div class="prev-ad-title" id="prevAdTitle">Your Ad Title</div>
+                    <div class="prev-ad-desc" id="prevAdDesc">Your ad description will appear here. Keep it short and engaging.</div>
+                    <div class="prev-ad-cta" id="prevAdCta" style="background:var(--accent);color:#000">Learn More</div>
+                  </div>
+                </div>
+              </div>
+              <!-- Chat preview -->
+              <div id="prevChat" style="display:none">
+                <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden">
+                  <div class="prev-ad-label">Sponsored</div>
+                  <div class="prev-chat-ad">
+                    <div id="prevChatImg" style="width:44px;height:44px;border-radius:10px;background:var(--bg4);flex-shrink:0;overflow:hidden">
+                      <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:18px">📢</div>
+                    </div>
+                    <div style="flex:1;min-width:0">
+                      <div style="font-size:13px;font-weight:700;margin-bottom:2px" id="prevChatTitle">Your Ad Title</div>
+                      <div style="font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" id="prevChatDesc">Your ad description here...</div>
+                    </div>
+                    <div style="font-size:11px;color:var(--accent);font-weight:700" id="prevChatCta">Learn More</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('adModal')">Cancel</button>
+      <button class="btn btn-accent" id="adSubmitBtn" onclick="submitAd()">📢 Create Campaign</button>
+    </div>
+  </div>
+</div>
+
+<!-- API Key Modal -->
+<div class="modal-overlay" id="apiKeyModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">🔑 Issue API Key</div>
+      <button class="modal-close" onclick="closeModal('apiKeyModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="field-group">
+          <label class="field-label">Key Name *</label>
+          <input type="text" class="field-input" id="apiKeyName" placeholder="e.g. MyApp Integration">
+        </div>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">Owner Name *</label>
+            <input type="text" class="field-input" id="apiOwnerName" placeholder="John Doe">
+          </div>
+          <div class="field-group">
+            <label class="field-label">Owner Email *</label>
+            <input type="email" class="field-input" id="apiOwnerEmail" placeholder="dev@example.com">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">Max Users</label>
+            <input type="number" class="field-input" id="apiMaxUsers" value="100" min="1">
+          </div>
+          <div class="field-group">
+            <label class="field-label">Rate Limit / min</label>
+            <input type="number" class="field-input" id="apiRateMin" value="60" min="1">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Daily Request Limit</label>
+          <input type="number" class="field-input" id="apiRateDay" value="10000" min="100">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Expiry (leave empty = no expiry)</label>
+          <input type="date" class="field-input" id="apiExpiry">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Permissions</label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" name="apiPerm" value="messaging" checked><label>Messaging</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="apiPerm" value="calls"><label>Calls</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="apiPerm" value="groups"><label>Groups</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="apiPerm" value="status"><label>Status</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="apiPerm" value="files"><label>File Upload</label></label>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('apiKeyModal')">Cancel</button>
+      <button class="btn btn-accent" onclick="createApiKey()">🔑 Generate Key</button>
+    </div>
+  </div>
+</div>
+
+<!-- API Key Result Modal -->
+<div class="modal-overlay" id="apiKeyResultModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">✅ API Key Created</div>
+      <button class="modal-close" onclick="closeModal('apiKeyResultModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--success-dim);border:1px solid rgba(46,213,115,0.3);border-radius:var(--radius-sm);padding:12px 14px;margin-bottom:16px;font-size:13px;color:var(--success)">
+        ⚠️ Save these credentials now — the secret cannot be shown again.
+      </div>
+      <div class="field-group" style="margin-bottom:12px">
+        <label class="field-label">API Key (Client Key)</label>
+        <div class="api-key-code" id="resultApiKey">
+          <span>—</span>
+          <button class="copy-btn" onclick="copyText('resultApiKey')">📋</button>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">API Secret (Server Key)</label>
+        <div class="api-key-code" id="resultApiSecret">
+          <span>—</span>
+          <button class="copy-btn" onclick="copyText('resultApiSecret')">📋</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-accent" onclick="closeModal('apiKeyResultModal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Role Modal -->
+<div class="modal-overlay" id="roleModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">🛡 Create Role</div>
+      <button class="modal-close" onclick="closeModal('roleModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="form-row">
+          <div class="field-group">
+            <label class="field-label">Role Key *</label>
+            <input type="text" class="field-input" id="roleName" placeholder="e.g. content_mod">
+          </div>
+          <div class="field-group">
+            <label class="field-label">Display Name *</label>
+            <input type="text" class="field-input" id="roleDisplayName" placeholder="Content Moderator">
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Description</label>
+          <input type="text" class="field-input" id="roleDesc" placeholder="What can this role do?">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Color</label>
+          <input type="color" class="field-input" id="roleColor" value="#00d4aa" style="height:44px;padding:4px">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Permissions</label>
+          <div style="display:flex;flex-direction:column;gap:8px" id="rolePermList">
+            <label class="checkbox-item"><input type="checkbox" name="rolePerm" value="manage_users"><label>Manage Users</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="rolePerm" value="ban_users"><label>Ban/Unban Users</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="rolePerm" value="delete_users"><label>Delete Users</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="rolePerm" value="manage_ads"><label>Manage Ads</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="rolePerm" value="manage_api_keys"><label>Manage API Keys</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="rolePerm" value="manage_roles"><label>Manage Roles</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="rolePerm" value="view_reports"><label>View Reports</label></label>
+            <label class="checkbox-item"><input type="checkbox" name="rolePerm" value="manage_settings"><label>Manage Settings</label></label>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('roleModal')">Cancel</button>
+      <button class="btn btn-accent" onclick="createRole()">🛡 Create Role</button>
+    </div>
+  </div>
+</div>
+
+<!-- Admin User Modal -->
+<div class="modal-overlay" id="adminUserModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title">👤 Add Admin User</div>
+      <button class="modal-close" onclick="closeModal('adminUserModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="field-group">
+          <label class="field-label">Username *</label>
+          <input type="text" class="field-input" id="newAdminUsername" placeholder="moderator_john">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Email *</label>
+          <input type="email" class="field-input" id="newAdminEmail" placeholder="mod@chatapp.com">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Password *</label>
+          <input type="password" class="field-input" id="newAdminPass" placeholder="Min 8 characters">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Role</label>
+          <select class="field-select" id="newAdminRole">
+            <option value="moderator">Moderator</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('adminUserModal')">Cancel</button>
+      <button class="btn btn-accent" onclick="createAdminUser()">👤 Create Admin</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm Modal -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <div class="modal-title" id="confirmTitle">Confirm Action</div>
+      <button class="modal-close" onclick="closeModal('confirmModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="confirmMessage" style="font-size:14px;line-height:1.6;color:var(--text-secondary)"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('confirmModal')">Cancel</button>
+      <button class="btn btn-danger" id="confirmOkBtn">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/socket.io.js"></script>
+<script>
+/* ════════════════════════════════════════════════════════════════════════════
+   ChatApp Admin Panel — JavaScript
+════════════════════════════════════════════════════════════════════════════ */
+
+const BASE = '/admin-api';
+let adminToken = localStorage.getItem('admin_token');
+let adminUser = null;
+let currentUsersPage = 1;
+let currentAdId = null;
+let currentBanUserId = null;
+let currentUnbanId = null;
+let settingsData = [];
+let userSearchTimeout = null;
+let adminSocket = null;
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+async function api(method, path, body, isFormData = false) {
+  const opts = { method, headers: {} };
+  if (adminToken) opts.headers['Authorization'] = 'Bearer ' + adminToken;
+  if (body && !isFormData) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  else if (body) opts.body = body;
+  const r = await fetch(BASE + path, opts);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+function showToast(msg, type = 'info') {
+  document.querySelectorAll('.admin-toast').forEach(t => t.remove());
+  const t = document.createElement('div');
+  t.className = `admin-toast ${type}`;
+  const icons = { success: '✅', error: '❌', info: 'ℹ️' };
+  t.innerHTML = `<span>${icons[type]||'ℹ️'}</span><span>${msg}</span>`;
+  document.body.appendChild(t);
+  setTimeout(() => t.classList.add('show'), 10);
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3500);
+}
+
+document.getElementById('adminLoginBtn').addEventListener('click', doAdminLogin);
+document.getElementById('adminPassword').addEventListener('keydown', e => { if (e.key === 'Enter') doAdminLogin(); });
+
+async function doAdminLogin() {
+  const email = document.getElementById('adminEmail').value.trim();
+  const password = document.getElementById('adminPassword').value;
+  const errEl = document.getElementById('adminLoginError');
+  errEl.classList.remove('show');
+  try {
+    const data = await api('POST', '/login', { email, password });
+    adminToken = data.token;
+    adminUser = data.admin;
+    localStorage.setItem('admin_token', adminToken);
+    onAdminAuth();
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.classList.add('show');
+  }
+}
+
+function onAdminAuth() {
+  document.getElementById('adminAuthScreen').style.display = 'none';
+  document.getElementById('adminApp').classList.add('visible');
+  updateSidebarAdminInfo();
+  initAdminSocket();
+  switchPanel('dashboard');
+  loadDashboard();
+  loadPendingUnbanCount();
+}
+
+function initAdminSocket() {
+  if (!adminToken || adminSocket?.connected) return;
+  adminSocket = io({ auth: { token: adminToken } });
+  adminSocket.on('admin-online-users', () => { loadDashboard(); if (document.getElementById('panel-users')?.classList.contains('active')) loadUsers(currentUsersPage); });
+  adminSocket.on('admin-user-status', () => { loadDashboard(); if (document.getElementById('panel-users')?.classList.contains('active')) loadUsers(currentUsersPage); });
+  adminSocket.on('admin-user-updated', () => { loadDashboard(); if (document.getElementById('panel-users')?.classList.contains('active')) loadUsers(currentUsersPage); });
+  adminSocket.on('admin-unban-request', () => { loadPendingUnbanCount(); if (document.getElementById('panel-unban')?.classList.contains('active')) loadUnbanRequests('pending'); showToast('New unban request received', 'info'); });
+  adminSocket.on('admin-unban-reviewed', () => { loadPendingUnbanCount(); if (document.getElementById('panel-unban')?.classList.contains('active')) loadUnbanRequests('pending'); });
+  adminSocket.on('admin-ad-updated', () => { loadDashboard(); if (document.getElementById('panel-ads')?.classList.contains('active')) loadAds(''); });
+  adminSocket.on('ad-updated', () => { loadDashboard(); if (document.getElementById('panel-ads')?.classList.contains('active')) loadAds(''); });
+}
+
+function updateSidebarAdminInfo() {
+  if (!adminUser) return;
+  const av = document.getElementById('sidebarAdminAvatar');
+  if (adminUser.avatar_url) av.innerHTML = `<img src="${adminUser.avatar_url}">`;
+  else av.textContent = (adminUser.username || '?')[0].toUpperCase();
+  document.getElementById('sidebarAdminName').textContent = adminUser.username || 'Admin';
+  document.getElementById('sidebarAdminRole').textContent = adminUser.role || 'admin';
+}
+
+document.getElementById('adminLogoutBtn').addEventListener('click', () => {
+  if (adminSocket) adminSocket.disconnect();
+  localStorage.removeItem('admin_token');
+  adminToken = null; adminUser = null;
+  document.getElementById('adminApp').classList.remove('visible');
+  document.getElementById('adminAuthScreen').style.display = 'flex';
+  document.getElementById('adminEmail').value = '';
+  document.getElementById('adminPassword').value = '';
+});
+
+// Check saved token
+if (adminToken) {
+  api('GET', '/me').then(admin => {
+    adminUser = admin;
+    onAdminAuth();
+  }).catch(() => { localStorage.removeItem('admin_token'); adminToken = null; });
+}
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+const panelTitles = {
+  dashboard: 'Dashboard', users: 'User Management', unban: 'Unban Requests',
+  ads: 'Advertisements', 'api-keys': 'API Keys', roles: 'Roles & Permissions',
+  'admin-users': 'Admin Users', settings: 'App Settings', activity: 'Activity Log'
+};
+
+const panelLoaders = {
+  users: loadUsers, unban: () => loadUnbanRequests('pending'),
+  ads: () => loadAds(''), 'api-keys': loadApiKeys,
+  roles: loadRoles, 'admin-users': loadAdminUsers,
+  settings: loadSettings, activity: loadActivity, dashboard: loadDashboard
+};
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    const panel = item.dataset.panel;
+    switchPanel(panel);
+    closeMobileSidebar();
+  });
+});
+
+function switchPanel(panel) {
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.toggle('active', i.dataset.panel === panel));
+  document.querySelectorAll('.admin-panel').forEach(p => p.classList.toggle('active', p.id === `panel-${panel}`));
+  document.getElementById('headerTitle').textContent = panelTitles[panel] || panel;
+  if (panelLoaders[panel]) panelLoaders[panel]();
+}
+
+// Mobile sidebar
+document.getElementById('mobileSidebarToggle').addEventListener('click', () => {
+  document.getElementById('adminSidebar').classList.add('mobile-open');
+  document.getElementById('sidebarOverlay').classList.add('show');
+});
+document.getElementById('sidebarOverlay').addEventListener('click', closeMobileSidebar);
+function closeMobileSidebar() {
+  document.getElementById('adminSidebar').classList.remove('mobile-open');
+  document.getElementById('sidebarOverlay').classList.remove('show');
+}
+
+// Notification button
+document.getElementById('headerNotifBtn').addEventListener('click', () => switchPanel('unban'));
+
+// ── Modals ────────────────────────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+document.querySelectorAll('.modal-overlay').forEach(m => {
+  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
+});
+
+function confirm2(title, msg, onOk) {
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMessage').textContent = msg;
+  const btn = document.getElementById('confirmOkBtn');
+  btn.onclick = () => { closeModal('confirmModal'); onOk(); };
+  openModal('confirmModal');
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  try {
+    const data = await api('GET', '/stats');
+    const { stats, userGrowth, msgGrowth, topUsers } = data;
+    renderStats(stats);
+    renderMiniChart('userGrowthChart', userGrowth);
+    renderMiniChart('msgChart', msgGrowth);
+    renderTopUsers(topUsers);
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function renderStats(s) {
+  const grid = document.getElementById('statsGrid');
+  const items = [
+    { label: 'Total Users', value: s.total_users, icon: '👥', cls: 'blue' },
+    { label: 'Active Users', value: s.active_users, icon: '✅', cls: 'green' },
+    { label: 'Online Now', value: s.online_users, icon: '🟢', cls: 'green' },
+    { label: 'Banned Users', value: s.banned_users, icon: '🚫', cls: 'red' },
+    { label: 'Messages Today', value: s.messages_today, icon: '💬', cls: 'blue' },
+    { label: 'New Today', value: s.new_users_today, icon: '✨', cls: 'purple' },
+    { label: 'Total Messages', value: s.total_messages, icon: '📊', cls: 'blue' },
+    { label: 'Total Groups', value: s.total_groups, icon: '👥', cls: 'purple' },
+    { label: 'Active Ads', value: s.active_ads, icon: '📢', cls: 'yellow' },
+    { label: 'API Keys', value: s.active_api_keys, icon: '🔑', cls: 'green' },
+    { label: 'Pending Unbans', value: s.pending_unban_requests, icon: '🔓', cls: 'red' },
+  ];
+  grid.innerHTML = items.map(i => `
+    <div class="stat-card ${i.cls}">
+      <div class="stat-icon">${i.icon}</div>
+      <div class="stat-value">${Number(i.value||0).toLocaleString()}</div>
+      <div class="stat-label">${i.label}</div>
+    </div>
+  `).join('');
+}
+
+function renderMiniChart(elId, data) {
+  const el = document.getElementById(elId);
+  if (!data?.length) { el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;padding-top:24px;text-align:center">No data</div>'; return; }
+  const max = Math.max(...data.map(d => d.count), 1);
+  el.innerHTML = data.slice(-20).map(d => {
+    const h = Math.max(4, Math.round((d.count / max) * 100));
+    return `<div class="mini-bar" style="height:${h}%" title="${d.date||''}: ${d.count}"></div>`;
+  }).join('');
+}
+
+function renderTopUsers(users) {
+  const tbody = document.getElementById('topUsersBody');
+  if (!users?.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">No data</td></tr>'; return; }
+  tbody.innerHTML = users.map((u, i) => `
+    <tr>
+      <td style="color:var(--text-muted);font-weight:700">#${i+1}</td>
+      <td>
+        <div class="user-cell">
+          <div class="user-cell-avatar" style="background:${u.avatar_color||'#00bfa5'}">${(u.username||'?')[0].toUpperCase()}</div>
+          <div>
+            <div class="user-cell-name">${u.username}</div>
+            <div class="user-cell-email">${u.email}</div>
+          </div>
+        </div>
+      </td>
+      <td><span class="badge badge-${u.is_online?'online':'offline'}">${u.is_online?'● Online':'Offline'}</span></td>
+      <td><strong>${Number(u.message_count||0).toLocaleString()}</strong></td>
+      <td>
+        <div class="table-actions">
+          <button class="btn btn-outline btn-xs" onclick="openUserDetail(${u.id})">View</button>
+          <button class="btn btn-danger btn-xs" onclick="openBanModal(${u.id},'${u.username}')">Ban</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// ── Users ─────────────────────────────────────────────────────────────────────
+function debounceUserSearch() {
+  clearTimeout(userSearchTimeout);
+  userSearchTimeout = setTimeout(loadUsers, 400);
+}
+
+async function loadUsers(page = 1) {
+  currentUsersPage = page;
+  const search = document.getElementById('userSearchInput')?.value || '';
+  const status = document.getElementById('userStatusFilter')?.value || '';
+  const sort = document.getElementById('userSortSelect')?.value || 'created_at';
+  const tbody = document.getElementById('usersTableBody');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div></td></tr>';
+  try {
+    const data = await api('GET', `/users?search=${encodeURIComponent(search)}&status=${status}&sort=${sort}&page=${page}&limit=20`);
+    tbody.innerHTML = data.users.map(u => `
+      <tr>
+        <td>
+          <div class="user-cell">
+            <div class="user-cell-avatar" style="background:${u.avatar_color||'#00bfa5'}">${u.avatar_url ? `<img src="${u.avatar_url}">` : (u.username||'?')[0].toUpperCase()}</div>
+            <div>
+              <div class="user-cell-name">${u.username}</div>
+              <div class="user-cell-email">${u.email}</div>
+            </div>
+          </div>
+        </td>
+        <td><span class="badge badge-${u.account_status||'active'}">${u.account_status||'active'}</span></td>
+        <td><span class="badge badge-${u.is_online?'online':'offline'}">${u.is_online?'● Online':'Offline'}</span></td>
+        <td>${Number(u.message_count||0).toLocaleString()}</td>
+        <td>${u.contact_count||0}</td>
+        <td style="color:var(--text-muted);font-size:12px">${new Date(u.created_at).toLocaleDateString()}</td>
+        <td>
+          <div class="table-actions">
+            <button class="btn btn-outline btn-xs" onclick="openUserDetail(${u.id})">View</button>
+            ${u.account_status==='banned'
+              ? `<button class="btn btn-success btn-xs" onclick="unbanUser(${u.id})">Unban</button>`
+              : `<button class="btn btn-danger btn-xs" onclick="openBanModal(${u.id},'${u.username}')">Ban</button>`}
+          </div>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text-muted)">No users found</td></tr>';
+    renderUserPagination(data);
+  } catch (e) { tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--danger)">${e.message}</td></tr>`; }
+}
+
+function renderUserPagination({ total, page, pages }) {
+  const el = document.getElementById('userPagination');
+  const start = (page-1)*20+1, end = Math.min(page*20, total);
+  el.innerHTML = `
+    <span class="pagination-info">Showing ${start}–${end} of ${total} users</span>
+    <div class="pagination-btns">
+      <button class="page-btn" ${page<=1?'disabled':''} onclick="loadUsers(${page-1})">‹</button>
+      ${Array.from({length:Math.min(pages,5)},(_,i)=>i+Math.max(1,page-2)).filter(p=>p<=pages).map(p=>`<button class="page-btn ${p===page?'active':''}" onclick="loadUsers(${p})">${p}</button>`).join('')}
+      <button class="page-btn" ${page>=pages?'disabled':''} onclick="loadUsers(${page+1})">›</button>
+    </div>
+  `;
+}
+
+async function openUserDetail(userId) {
+  const title = document.getElementById('userDetailTitle');
+  const body = document.getElementById('userDetailBody');
+  const footer = document.getElementById('userDetailFooter');
+  title.textContent = 'Loading...';
+  body.innerHTML = '<div style="text-align:center;padding:32px"><div class="spinner" style="margin:0 auto"></div></div>';
+  footer.innerHTML = '';
+  openModal('userDetailModal');
+  try {
+    const u = await api('GET', `/users/${userId}`);
+    title.textContent = u.username + ' — Profile';
+    body.innerHTML = `
+      <div class="user-detail-hero">
+        <div class="user-detail-avatar" style="background:${u.avatar_color||'#00bfa5'};margin:0 auto 12px">
+          ${u.avatar_url ? `<img src="${u.avatar_url}">` : (u.username||'?')[0].toUpperCase()}
+        </div>
+        <div class="user-detail-name">${u.username}</div>
+        <div class="user-detail-email">${u.email}</div>
+        <div style="margin-top:8px"><span class="badge badge-${u.account_status||'active'}">${u.account_status||'active'}</span></div>
+      </div>
+      <div class="user-stat-row">
+        <div class="user-stat-box"><div class="user-stat-val">${Number(u.message_count||0).toLocaleString()}</div><div class="user-stat-lbl">Messages</div></div>
+        <div class="user-stat-box"><div class="user-stat-val">${u.contact_count||0}</div><div class="user-stat-lbl">Contacts</div></div>
+        <div class="user-stat-box"><div class="user-stat-val">${u.group_count||0}</div><div class="user-stat-lbl">Groups</div></div>
+        <div class="user-stat-box"><div class="user-stat-val">${u.call_count||0}</div><div class="user-stat-lbl">Calls</div></div>
+      </div>
+      <div class="card" style="margin-bottom:16px">
+        <div class="card-header"><div class="card-title">Edit Profile</div></div>
+        <div class="card-body">
+          <div class="form-row" style="margin-bottom:14px">
+            <div class="field-group"><label class="field-label">Username</label><input type="text" class="field-input" id="editUsername" value="${u.username||''}"></div>
+            <div class="field-group"><label class="field-label">Email</label><input type="email" class="field-input" id="editEmail" value="${u.email||''}"></div>
+          </div>
+          <div class="form-row" style="margin-bottom:14px">
+            <div class="field-group"><label class="field-label">Phone</label><input type="text" class="field-input" id="editPhone" value="${u.phone||''}"></div>
+            <div class="field-group"><label class="field-label">Account Status</label>
+              <select class="field-select" id="editAccountStatus">
+                <option value="active" ${u.account_status==='active'?'selected':''}>Active</option>
+                <option value="banned" ${u.account_status==='banned'?'selected':''}>Banned</option>
+                <option value="suspended" ${u.account_status==='suspended'?'selected':''}>Suspended</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-group"><label class="field-label">About</label><input type="text" class="field-input" id="editAbout" value="${u.about||''}"></div>
+        </div>
+      </div>
+      ${u.ban_history?.length ? `
+        <div class="card">
+          <div class="card-header"><div class="card-title">Ban History</div></div>
+          <div class="card-body" style="padding:0">
+            <table class="admin-table">
+              <thead><tr><th>Reason</th><th>Type</th><th>Banned By</th><th>Date</th><th>Active</th></tr></thead>
+              <tbody>${u.ban_history.map(b=>`
+                <tr>
+                  <td>${b.reason||'—'}</td>
+                  <td><span class="badge badge-${b.ban_type==='permanent'?'banned':'suspended'}">${b.ban_type}</span></td>
+                  <td>${b.banned_by_name||'—'}</td>
+                  <td style="font-size:12px;color:var(--text-muted)">${new Date(b.created_at).toLocaleString()}</td>
+                  <td>${b.is_active?'<span class="badge badge-banned">Yes</span>':'<span class="badge badge-active">Lifted</span>'}</td>
+                </tr>
+              `).join('')}</tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
+    `;
+    footer.innerHTML = `
+      <button class="btn btn-outline" onclick="closeModal('userDetailModal')">Close</button>
+      ${u.account_status==='banned'
+        ? `<button class="btn btn-success" onclick="unbanUser(${u.id});closeModal('userDetailModal')">✅ Unban</button>`
+        : `<button class="btn btn-danger" onclick="closeModal('userDetailModal');openBanModal(${u.id},'${u.username}')">🚫 Ban User</button>`}
+      <button class="btn btn-accent" onclick="saveUserEdit(${u.id})">💾 Save Changes</button>
+    `;
+  } catch (e) { body.innerHTML = `<div style="color:var(--danger);text-align:center;padding:24px">${e.message}</div>`; }
+}
+
+async function saveUserEdit(userId) {
+  const body = {
+    username: document.getElementById('editUsername')?.value,
+    email: document.getElementById('editEmail')?.value,
+    phone: document.getElementById('editPhone')?.value,
+    about: document.getElementById('editAbout')?.value,
+    account_status: document.getElementById('editAccountStatus')?.value
+  };
+  try {
+    await api('PUT', `/users/${userId}`, body);
+    showToast('User updated!', 'success');
+    loadUsers();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function openBanModal(userId, username) {
+  currentBanUserId = userId;
+  document.getElementById('banModalUser').innerHTML = `<div class="user-cell-avatar" style="background:#e53e3e;color:#fff">${(username||'?')[0].toUpperCase()}</div><div><div class="user-cell-name">${username}</div><div class="user-cell-email">ID: ${userId}</div></div>`;
+  document.getElementById('banReason').value = '';
+  document.getElementById('banType').value = 'permanent';
+  document.getElementById('banUntilWrap').style.display = 'none';
+  document.getElementById('banConfirmBtn').onclick = doban;
+  openModal('banModal');
+}
+
+document.getElementById('banType').addEventListener('change', function() {
+  document.getElementById('banUntilWrap').style.display = this.value === 'temporary' ? 'block' : 'none';
+});
+
+async function doban() {
+  if (!currentBanUserId) return;
+  try {
+    await api('POST', `/users/${currentBanUserId}/ban`, {
+      reason: document.getElementById('banReason').value,
+      banType: document.getElementById('banType').value,
+      bannedUntil: document.getElementById('banUntil')?.value || null
+    });
+    closeModal('banModal');
+    showToast('User banned successfully', 'success');
+    loadUsers();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function unbanUser(userId) {
+  try {
+    await api('POST', `/users/${userId}/unban`, {});
+    showToast('User unbanned!', 'success');
+    loadUsers();
+    loadPendingUnbanCount();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Unban Requests ────────────────────────────────────────────────────────────
+async function loadPendingUnbanCount() {
+  try {
+    const data = await api('GET', '/unban-requests?status=pending');
+    const count = data.length;
+    const badge = document.getElementById('unbanBadge');
+    const notif = document.getElementById('notifBadge');
+    badge.style.display = count > 0 ? 'inline-block' : 'none';
+    badge.textContent = count;
+    notif.style.display = count > 0 ? 'flex' : 'none';
+    notif.textContent = count;
+  } catch {}
+}
+
+async function loadUnbanRequests(status = 'pending', btn) {
+  if (btn) { document.querySelectorAll('#panel-unban .tab-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+  const list = document.getElementById('unbanList');
+  list.innerHTML = '<div style="text-align:center;padding:32px"><div class="spinner" style="margin:0 auto"></div></div>';
+  try {
+    const data = await api('GET', `/unban-requests?status=${status}`);
+    if (!data.length) { list.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📭</div><div class="empty-state-title">No Requests</div><div class="empty-state-desc">No ' + status + ' unban requests</div></div>'; return; }
+    list.innerHTML = data.map(r => `
+      <div class="unban-card ${r.status}">
+        <div class="unban-header">
+          <div>
+            <div class="unban-user">${r.username} <span class="badge badge-banned" style="font-size:10px">Banned</span></div>
+            <div class="unban-email">${r.user_email}</div>
+          </div>
+          <div class="unban-date">${new Date(r.created_at).toLocaleDateString()}</div>
+        </div>
+        <div class="unban-reason"><strong>Reason:</strong> ${r.reason}</div>
+        ${r.appeal_message ? `<div class="unban-reason"><strong>Appeal:</strong> ${r.appeal_message}</div>` : ''}
+        ${status==='pending' ? `
+          <div class="unban-actions">
+            <button class="btn btn-danger btn-sm" onclick="reviewUnban(${r.id},'rejected')">❌ Reject</button>
+            <button class="btn btn-success btn-sm" onclick="reviewUnban(${r.id},'approved')">✅ Approve</button>
+          </div>
+        ` : `<div style="margin-top:8px"><span class="badge badge-${r.status}">${r.status}</span> ${r.review_note?`<span style="font-size:12px;color:var(--text-muted);margin-left:8px">${r.review_note}</span>`:''}</div>`}
+      </div>
+    `).join('');
+  } catch (e) { list.innerHTML = `<div style="color:var(--danger);text-align:center;padding:24px">${e.message}</div>`; }
+}
+
+async function reviewUnban(id, status) {
+  try {
+    await api('PUT', `/unban-requests/${id}`, { status, reviewNote: '' });
+    showToast(status === 'approved' ? 'User unbanned!' : 'Request rejected', 'success');
+    loadUnbanRequests('pending');
+    loadPendingUnbanCount();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Ads ───────────────────────────────────────────────────────────────────────
+async function loadAds(status = '', btn) {
+  if (btn) { document.querySelectorAll('#panel-ads .tab-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+  const grid = document.getElementById('adsGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:48px;color:var(--text-muted);grid-column:1/-1">Loading...</div>';
+  try {
+    const data = await api('GET', `/ads?status=${status}&limit=50`);
+    if (!data.ads.length) { grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">📢</div><div class="empty-state-title">No Campaigns</div><div class="empty-state-desc">Create your first ad campaign</div></div>'; return; }
+    grid.innerHTML = data.ads.map(ad => `
+      <div class="ad-card">
+        <div class="ad-card-img" style="${ad.media_url?'':'background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:36px'}">
+          ${ad.media_url ? (ad.media_type==='video' ? `<video src="${ad.media_url}" style="width:100%;height:140px;object-fit:cover" muted></video>` : `<img src="${ad.media_url}" style="width:100%;height:140px;object-fit:cover">`) : '📢'}
+        </div>
+        <div class="ad-card-body">
+          <div class="ad-card-meta">
+            <span class="ad-card-type">${ad.ad_type}</span>
+            <span class="badge badge-${ad.status}">${ad.status}</span>
+          </div>
+          <div class="ad-card-title">${ad.title}</div>
+          ${ad.advertiser_name?`<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">By ${ad.advertiser_name}</div>`:''}
+          <div style="font-size:11px;color:var(--text-muted)">${new Date(ad.start_date).toLocaleDateString()} → ${new Date(ad.end_date).toLocaleDateString()}</div>
+          <div class="ad-card-stats">
+            <div class="ad-card-stat"><strong>${Number(ad.impressions||0).toLocaleString()}</strong>Impressions</div>
+            <div class="ad-card-stat"><strong>${Number(ad.clicks||0).toLocaleString()}</strong>Clicks</div>
+            <div class="ad-card-stat"><strong>${ad.clicks&&ad.impressions?(ad.clicks/ad.impressions*100).toFixed(2)+'%':'0%'}</strong>CTR</div>
+          </div>
+          <div class="ad-card-actions">
+            <button class="btn btn-outline btn-xs" onclick="openAdModal(${ad.id})">✏️ Edit</button>
+            ${ad.status==='active'
+              ? `<button class="btn btn-warning btn-xs" onclick="updateAdStatus(${ad.id},'paused')">⏸ Pause</button>`
+              : `<button class="btn btn-success btn-xs" onclick="updateAdStatus(${ad.id},'active')">▶ Activate</button>`}
+            <button class="btn btn-danger btn-xs" onclick="deleteAd(${ad.id})">🗑</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) { grid.innerHTML = `<div style="color:var(--danger);text-align:center;padding:24px;grid-column:1/-1">${e.message}</div>`; }
+}
+
+async function loadUserSubmittedAds(status = 'pending', btn) {
+  if (btn) { document.querySelectorAll('#panel-ads .tab-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+  const grid = document.getElementById('adsGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:48px;color:var(--text-muted);grid-column:1/-1">Loading user ads...</div>';
+  try {
+    const ads = await api('GET', `/user-ads?status=${status}`);
+    if (!ads.length) { grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="empty-state-icon">📢</div><div class="empty-state-title">No User Ads</div><div class="empty-state-desc">No pending user campaigns</div></div>'; return; }
+    grid.innerHTML = ads.map(ad => `
+      <div class="ad-card">
+        <div class="ad-card-img" style="${ad.media_url?'':'background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:36px'}">
+          ${ad.media_url ? (ad.media_type==='video' ? `<video src="${ad.media_url}" style="width:100%;height:140px;object-fit:cover" muted></video>` : `<img src="${ad.media_url}" style="width:100%;height:140px;object-fit:cover">`) : '📢'}
+        </div>
+        <div class="ad-card-body">
+          <div class="ad-card-meta"><span class="ad-card-type">user ad</span><span class="badge badge-${ad.status}">${ad.status}</span></div>
+          <div class="ad-card-title">${ad.title}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">By ${ad.username} · Budget ₹${Number(ad.budget||0).toFixed(2)} · Spent ₹${Number(ad.spent||0).toFixed(2)}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${ad.description||''}</div>
+          <div class="ad-card-actions">
+            <button class="btn btn-success btn-xs" onclick="reviewUserAd(${ad.id},'approved')">Approve</button>
+            <button class="btn btn-danger btn-xs" onclick="reviewUserAd(${ad.id},'rejected')">Reject</button>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) { grid.innerHTML = `<div style="color:var(--danger);text-align:center;padding:24px;grid-column:1/-1">${e.message}</div>`; }
+}
+
+async function reviewUserAd(adId, status) {
+  try {
+    await api('PUT', `/user-ads/${adId}/review`, { status, rejectReason: status === 'rejected' ? 'Rejected by admin' : null });
+    showToast(status === 'approved' ? 'User ad approved' : 'User ad rejected', 'success');
+    loadUserSubmittedAds('pending');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+function openAdModal(adId = null) {
+  currentAdId = adId;
+  document.getElementById('adModalTitle').textContent = adId ? '✏️ Edit Campaign' : '📢 Create Campaign';
+  document.getElementById('adSubmitBtn').textContent = adId ? '💾 Save Changes' : '📢 Create Campaign';
+  if (!adId) {
+    ['adTitle','adDesc','adMediaUrl','adCtaUrl','adTargetLocation','adTargetInterests','adAdvertiserName','adAdvertiserEmail'].forEach(id => { if(document.getElementById(id)) document.getElementById(id).value=''; });
+    document.getElementById('adCtaText').value = 'Learn More';
+    document.getElementById('adStatus').value = 'draft';
+    document.getElementById('adPriority').value = '1';
+    document.getElementById('adBudget').value = '0';
+    document.getElementById('adDailyBudget').value = '0';
+    document.getElementById('adCpc').value = '0';
+    document.getElementById('adCpm').value = '0';
+    const today = new Date().toISOString().split('T')[0];
+    const end = new Date(Date.now()+30*864e5).toISOString().split('T')[0];
+    document.getElementById('adStartDate').value = today;
+    document.getElementById('adEndDate').value = end;
+  }
+  openModal('adModal');
+}
+
+async function submitAd() {
+  const fd = new FormData();
+  const fields = {
+    title: 'adTitle', description: 'adDesc', ad_type: 'adType', media_type: 'adMediaType',
+    media_url: 'adMediaUrl', cta_text: 'adCtaText', cta_url: 'adCtaUrl',
+    budget: 'adBudget', daily_budget: 'adDailyBudget', cost_per_click: 'adCpc', cost_per_impression: 'adCpm',
+    start_date: 'adStartDate', end_date: 'adEndDate',
+    target_gender: 'adTargetGender', target_age_min: 'adAgeMin', target_age_max: 'adAgeMax',
+    target_location: 'adTargetLocation', target_interests: 'adTargetInterests',
+    advertiser_name: 'adAdvertiserName', advertiser_email: 'adAdvertiserEmail',
+    status: 'adStatus', priority: 'adPriority'
+  };
+  for (const [k, id] of Object.entries(fields)) {
+    const el = document.getElementById(id);
+    if (el) fd.append(k, el.value);
+  }
+  fd.append('placement_status', document.getElementById('placementStatus')?.checked ? 1 : 0);
+  fd.append('placement_chat', document.getElementById('placementChat')?.checked ? 1 : 0);
+  fd.append('placement_calls', document.getElementById('placementCalls')?.checked ? 1 : 0);
+  fd.append('placement_home', document.getElementById('placementHome')?.checked ? 1 : 0);
+  const mediaFile = document.getElementById('adMediaFile')?.files[0];
+  if (mediaFile) fd.append('media', mediaFile);
+  try {
+    if (currentAdId) await api('PUT', `/ads/${currentAdId}`, fd, true);
+    else await api('POST', '/ads', fd, true);
+    closeModal('adModal');
+    showToast(currentAdId ? 'Campaign updated!' : 'Campaign created!', 'success');
+    loadAds('');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function updateAdStatus(adId, status) {
+  try {
+    await api('PUT', `/ads/${adId}`, { status });
+    showToast(`Ad ${status}`, 'success');
+    loadAds('');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function deleteAd(adId) {
+  confirm2('Delete Campaign', 'This action cannot be undone. The campaign and all its data will be permanently deleted.', async () => {
+    try {
+      await api('DELETE', `/ads/${adId}`);
+      showToast('Campaign deleted', 'success');
+      loadAds('');
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+}
+
+async function handleAdMediaUpload(input) {
+  const file = input.files[0]; if (!file) return;
+  const localUrl = URL.createObjectURL(file);
+  document.getElementById('adMediaUrl').value = localUrl;
+  updateAdPreview();
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const r = await fetch('/admin-api/upload/media', { method: 'POST', headers: { Authorization: 'Bearer ' + adminToken }, body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || 'Upload failed');
+    if (data.url) { document.getElementById('adMediaUrl').value = data.url; updateAdPreview(); }
+  } catch (e) { showToast(e.message, 'error'); }
+  finally { setTimeout(() => URL.revokeObjectURL(localUrl), 5000); }
+}
+
+// Ad preview
+function updateAdPreview() {
+  const title = document.getElementById('adTitle')?.value || 'Your Ad Title';
+  const desc = document.getElementById('adDesc')?.value || 'Your ad description will appear here.';
+  const cta = document.getElementById('adCtaText')?.value || 'Learn More';
+  const advertiser = document.getElementById('adAdvertiserName')?.value || 'Your Brand';
+  const mediaUrl = document.getElementById('adMediaUrl')?.value || '';
+  const imgWrap = document.getElementById('prevAdImgWrap');
+  if (imgWrap) imgWrap.innerHTML = mediaUrl ? `<img src="${mediaUrl}" style="width:100%;height:140px;object-fit:cover;display:block">` : '<div style="height:140px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:13px">No media</div>';
+  if (document.getElementById('prevAdTitle')) document.getElementById('prevAdTitle').textContent = title;
+  if (document.getElementById('prevAdDesc')) document.getElementById('prevAdDesc').textContent = desc;
+  if (document.getElementById('prevAdCta')) document.getElementById('prevAdCta').textContent = cta;
+  if (document.getElementById('prevAdvert')) document.getElementById('prevAdvert').textContent = advertiser;
+  if (document.getElementById('prevChatTitle')) document.getElementById('prevChatTitle').textContent = title;
+  if (document.getElementById('prevChatDesc')) document.getElementById('prevChatDesc').textContent = desc;
+  if (document.getElementById('prevChatCta')) document.getElementById('prevChatCta').textContent = cta;
+}
+
+function switchAdPreview(type, btn) {
+  document.querySelectorAll('.ad-preview-tab').forEach(b => b.classList.remove('active')); btn.classList.add('active');
+  document.getElementById('prevStatus').style.display = type==='status' ? 'block' : 'none';
+  document.getElementById('prevChat').style.display = type==='chat' ? 'block' : 'none';
+}
+
+// ── API Keys ───────────────────────────────────────────────────────────────────
+async function loadApiKeys() {
+  const el = document.getElementById('apiKeysList');
+  el.innerHTML = '<div style="text-align:center;padding:32px"><div class="spinner" style="margin:0 auto"></div></div>';
+  try {
+    const keys = await api('GET', '/api-keys');
+    if (!keys.length) { el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔑</div><div class="empty-state-title">No API Keys</div><div class="empty-state-desc">Issue your first API key</div></div>'; return; }
+    el.innerHTML = keys.map(k => {
+      const pct = Math.min(100, Math.round((k.current_users / k.max_users) * 100));
+      return `
+        <div class="api-key-card">
+          <div class="api-key-header">
+            <div>
+              <div class="api-key-name">${k.key_name}</div>
+              <div class="api-key-owner">${k.owner_name} — ${k.owner_email}</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="badge badge-${k.status}">${k.status}</span>
+              <button class="btn btn-danger btn-xs" onclick="revokeApiKey(${k.id})">Revoke</button>
+            </div>
+          </div>
+          <div class="api-key-code">
+            <span style="font-size:11px">${k.api_key}</span>
+            <button class="copy-btn" onclick="navigator.clipboard.writeText('${k.api_key}').then(()=>showToast('Copied!','success'))">📋</button>
+          </div>
+          <div class="api-key-stats">
+            <div class="api-key-stat"><strong>${k.current_users}/${k.max_users}</strong> Users</div>
+            <div class="api-key-stat"><strong>${Number(k.total_requests||0).toLocaleString()}</strong> Requests</div>
+            <div class="api-key-stat"><strong>${k.rate_limit_per_min}/min</strong> Rate Limit</div>
+            <div class="api-key-stat"><strong>${k.expires_at ? new Date(k.expires_at).toLocaleDateString() : 'Never'}</strong> Expires</div>
+          </div>
+          <div class="usage-bar-wrap">
+            <div class="usage-bar-label"><span>User Usage</span><span>${pct}%</span></div>
+            <div class="usage-bar"><div class="usage-bar-fill" style="width:${pct}%"></div></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) { el.innerHTML = `<div style="color:var(--danger);text-align:center;padding:24px">${e.message}</div>`; }
+}
+
+function openApiKeyModal() { openModal('apiKeyModal'); }
+
+async function createApiKey() {
+  const perms = {};
+  document.querySelectorAll('input[name="apiPerm"]').forEach(cb => { if (cb.checked) perms[cb.value] = true; });
+  try {
+    const data = await api('POST', '/api-keys', {
+      keyName: document.getElementById('apiKeyName').value,
+      ownerName: document.getElementById('apiOwnerName').value,
+      ownerEmail: document.getElementById('apiOwnerEmail').value,
+      maxUsers: parseInt(document.getElementById('apiMaxUsers').value),
+      rateLimitPerMin: parseInt(document.getElementById('apiRateMin').value),
+      rateLimitPerDay: parseInt(document.getElementById('apiRateDay').value),
+      expiresAt: document.getElementById('apiExpiry').value || null,
+      permissions: perms
+    });
+    closeModal('apiKeyModal');
+    document.getElementById('resultApiKey').querySelector('span').textContent = data.apiKey;
+    document.getElementById('resultApiSecret').querySelector('span').textContent = data.apiSecret;
+    openModal('apiKeyResultModal');
+    loadApiKeys();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function revokeApiKey(id) {
+  confirm2('Revoke API Key', 'This will immediately disable the API key. All integrations using it will stop working.', async () => {
+    try {
+      await api('DELETE', `/api-keys/${id}`);
+      showToast('API key revoked', 'success');
+      loadApiKeys();
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+}
+
+function copyText(elId) {
+  const el = document.getElementById(elId);
+  const text = el.querySelector('span')?.textContent || '';
+  navigator.clipboard.writeText(text).then(() => showToast('Copied!', 'success'));
+}
+
+// ── Roles ──────────────────────────────────────────────────────────────────────
+async function loadRoles() {
+  const el = document.getElementById('rolesList');
+  el.innerHTML = '<div style="text-align:center;padding:32px"><div class="spinner" style="margin:0 auto"></div></div>';
+  try {
+    const roles = await api('GET', '/roles');
+    const perms = ['manage_users','ban_users','delete_users','manage_ads','manage_api_keys','manage_roles','view_reports','manage_settings'];
+    el.innerHTML = roles.map(r => {
+      let p = {};
+      try { p = typeof r.permissions==='string' ? JSON.parse(r.permissions) : (r.permissions||{}); } catch {}
+      return `
+        <div class="role-card">
+          <div class="role-color-dot" style="background:${r.color||'#00d4aa'}"></div>
+          <div class="role-info">
+            <div class="role-name">${r.display_name} <code style="font-size:11px;background:var(--bg4);padding:1px 5px;border-radius:4px">${r.role_name}</code></div>
+            <div class="role-desc">${r.description||'—'}</div>
+            <div class="perm-tags">${perms.map(pm=>`<span class="perm-tag ${p[pm]?'on':''}">${pm.replace(/_/g,' ')}</span>`).join('')}</div>
+          </div>
+          ${!r.is_system ? `<button class="btn btn-danger btn-sm" onclick="deleteRole(${r.id})">🗑</button>` : '<span class="badge badge-active">System</span>'}
+        </div>
+      `;
+    }).join('') || '<div class="empty-state"><div class="empty-state-icon">🛡</div><div class="empty-state-title">No Custom Roles</div></div>';
+  } catch (e) { el.innerHTML = `<div style="color:var(--danger);text-align:center;padding:24px">${e.message}</div>`; }
+}
+
+function openRoleModal() { openModal('roleModal'); }
+
+async function createRole() {
+  const perms = {};
+  document.querySelectorAll('input[name="rolePerm"]').forEach(cb => { if (cb.checked) perms[cb.value] = true; });
+  try {
+    await api('POST', '/roles', {
+      roleName: document.getElementById('roleName').value,
+      displayName: document.getElementById('roleDisplayName').value,
+      description: document.getElementById('roleDesc').value,
+      color: document.getElementById('roleColor').value,
+      permissions: perms
+    });
+    closeModal('roleModal');
+    showToast('Role created!', 'success');
+    loadRoles();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Admin Users ───────────────────────────────────────────────────────────────
+async function loadAdminUsers() {
+  const tbody = document.getElementById('adminUsersBody');
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px"><div class="spinner" style="margin:0 auto"></div></td></tr>';
+  try {
+    const admins = await api('GET', '/admin-users');
+    tbody.innerHTML = admins.map(a => `
+      <tr>
+        <td>
+          <div class="user-cell">
+            <div class="user-cell-avatar" style="background:var(--accent);color:#000">${a.avatar_url?`<img src="${a.avatar_url}">`:(a.username||'?')[0].toUpperCase()}</div>
+            <div>
+              <div class="user-cell-name">${a.username}</div>
+              <div class="user-cell-email">${a.email}</div>
+            </div>
+          </div>
+        </td>
+        <td><span class="badge badge-${a.role}">${a.role}</span></td>
+        <td><span class="badge badge-${a.is_active?'active':'banned'}">${a.is_active?'Active':'Inactive'}</span></td>
+        <td style="font-size:12px;color:var(--text-muted)">${a.last_login?new Date(a.last_login).toLocaleString():'Never'}</td>
+        <td>
+          <div class="table-actions">
+            ${a.id !== adminUser?.id ? `<button class="btn btn-danger btn-xs" onclick="deactivateAdmin(${a.id})">Deactivate</button>` : '<span style="font-size:12px;color:var(--text-muted)">You</span>'}
+          </div>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted)">No admin users</td></tr>';
+  } catch (e) { tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger);text-align:center;padding:24px">${e.message}</td></tr>`; }
+}
+
+function openAdminUserModal() { openModal('adminUserModal'); }
+
+async function createAdminUser() {
+  try {
+    await api('POST', '/admin-users', {
+      username: document.getElementById('newAdminUsername').value,
+      email: document.getElementById('newAdminEmail').value,
+      password: document.getElementById('newAdminPass').value,
+      role: document.getElementById('newAdminRole').value
+    });
+    closeModal('adminUserModal');
+    showToast('Admin user created!', 'success');
+    loadAdminUsers();
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function deactivateAdmin(id) {
+  confirm2('Deactivate Admin', 'This will revoke their dashboard access. You can re-enable from the database if needed.', async () => {
+    try {
+      await api('DELETE', `/admin-users/${id}`);
+      showToast('Admin deactivated', 'success');
+      loadAdminUsers();
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function loadSettings() {
+  const el = document.getElementById('settingsBody');
+  el.innerHTML = '<div style="text-align:center;padding:24px"><div class="spinner" style="margin:0 auto"></div></div>';
+  try {
+    const settings = await api('GET', '/settings');
+    settingsData = settings;
+    el.innerHTML = settings.map(s => `
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">${s.setting_key.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}</div>
+          <div class="toggle-desc">${s.description||''}</div>
+        </div>
+        <div>
+          ${s.setting_type==='boolean'
+            ? `<label class="toggle-switch"><input type="checkbox" id="setting_${s.setting_key}" ${s.setting_value==='true'?'checked':''}><span class="toggle-slider"></span></label>`
+            : `<input type="${s.setting_type==='number'?'number':'text'}" class="field-input" id="setting_${s.setting_key}" value="${s.setting_value||''}" style="width:160px;text-align:right">`
+          }
+        </div>
+      </div>
+    `).join('') || '<div style="color:var(--text-muted);text-align:center;padding:24px">No settings found</div>';
+    el.insertAdjacentHTML('beforeend', `
+      <div class="card" style="margin-top:18px">
+        <div class="card-header"><div class="card-title">Payment Gateways</div></div>
+        <div class="card-body" id="paymentGatewayBody">
+          <div style="text-align:center;padding:16px;color:var(--text-muted)">Loading gateways...</div>
+        </div>
+      </div>
+    `);
+    loadPaymentGateways();
+  } catch (e) { el.innerHTML = `<div style="color:var(--danger);text-align:center;padding:24px">${e.message}</div>`; }
+}
+
+async function saveSettings() {
+  const settings = settingsData.map(s => {
+    const el = document.getElementById(`setting_${s.setting_key}`);
+    if (!el) return null;
+    return { key: s.setting_key, value: s.setting_type==='boolean' ? String(el.checked) : el.value, type: s.setting_type };
+  }).filter(Boolean);
+  try {
+    await api('PUT', '/settings', { settings });
+    showToast('Settings saved!', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function loadPaymentGateways() {
+  const el = document.getElementById('paymentGatewayBody');
+  if (!el) return;
+  try {
+    const gateways = await api('GET', '/payment-gateways');
+    const razorpay = gateways.find(g => g.name === 'razorpay') || { config: {} };
+    el.innerHTML = `
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-label">Razorpay</div>
+          <div class="toggle-desc">Used for user ad wallet top-ups</div>
+        </div>
+        <label class="toggle-switch"><input type="checkbox" id="gwRazorpayActive" ${razorpay.is_active?'checked':''}><span class="toggle-slider"></span></label>
+      </div>
+      <div class="form-row" style="margin-top:12px">
+        <div class="field-group"><label class="field-label">Key ID</label><input class="field-input" id="gwRazorpayKeyId" value="${razorpay.config?.key_id||''}"></div>
+        <div class="field-group"><label class="field-label">Key Secret</label><input class="field-input" id="gwRazorpayKeySecret" type="password" value="${razorpay.config?.key_secret||''}" placeholder="Leave ******** to keep old secret"></div>
+      </div>
+      <button class="btn btn-accent btn-sm" style="margin-top:12px" onclick="saveRazorpayGateway()">Save Razorpay</button>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:13px">${e.message}</div>`;
+  }
+}
+
+async function saveRazorpayGateway() {
+  try {
+    await api('PUT', '/payment-gateways/razorpay', {
+      isActive: document.getElementById('gwRazorpayActive')?.checked,
+      config: {
+        key_id: document.getElementById('gwRazorpayKeyId')?.value || '',
+        key_secret: document.getElementById('gwRazorpayKeySecret')?.value || ''
+      }
+    });
+    showToast('Razorpay settings saved', 'success');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+// ── Activity ───────────────────────────────────────────────────────────────────
+async function loadActivity() {
+  const el = document.getElementById('activityList');
+  el.innerHTML = '<div style="text-align:center;padding:24px"><div class="spinner" style="margin:0 auto"></div></div>';
+  try {
+    const logs = await api('GET', '/activity');
+    if (!logs.length) { el.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📋</div><div class="empty-state-title">No Activity</div><div class="empty-state-desc">Admin actions will appear here</div></div>'; return; }
+    el.innerHTML = logs.map(log => {
+      const actionClasses = { ban_user:'action-ban', unban_user:'action-unban', approve_unban:'action-unban', reject_unban:'action-ban', create_ad:'action-create', delete_user:'action-delete', update_user:'action-update', create_api_key:'action-create' };
+      return `
+        <div class="activity-item">
+          <div class="activity-avatar">${log.admin_avatar?`<img src="${log.admin_avatar}">`:(log.admin_name||'?')[0].toUpperCase()}</div>
+          <div class="activity-body">
+            <div class="activity-text">
+              <strong>${log.admin_name}</strong>
+              <span class="action-badge ${actionClasses[log.action]||''}">${log.action.replace(/_/g,' ')}</span>
+              ${log.target_type?`<span style="color:var(--text-secondary)"> on ${log.target_type} #${log.target_id}</span>`:''}
+            </div>
+            <div class="activity-time">${new Date(log.created_at).toLocaleString()} · ${log.ip_address||'—'}</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) { el.innerHTML = `<div style="color:var(--danger);text-align:center;padding:24px">${e.message}</div>`; }
+}
+
+// ── Notification header ────────────────────────────────────────────────────────
+document.getElementById('headerProfileBtn').addEventListener('click', () => {
+  showToast(`Logged in as ${adminUser?.username} (${adminUser?.role})`, 'info');
+});
+
+// Auto-refresh pending count
+setInterval(loadPendingUnbanCount, 60000);
+</script>
+</body>
+</html>
