@@ -8,8 +8,6 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import mysql from 'mysql2/promise';
-import dotenv from 'dotenv';
-dotenv.config();
 
 const router = express.Router();
 let pool, io;
@@ -80,6 +78,8 @@ export async function initBanAdsTables(poolInstance) {
   await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS verification_documents JSON DEFAULT NULL`);
   await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS verification_status ENUM('not_required','requested','submitted','approved','rejected') DEFAULT 'not_required'`);
   await q(`ALTER TABLE user_ads MODIFY COLUMN status ENUM('draft','pending','approved','paused','hold','suspended','document_requested','ended','rejected') DEFAULT 'pending'`);
+  await q(`ALTER TABLE user_ad_events MODIFY COLUMN event_type ENUM('impression','click','lead','call','whatsapp','website_visit') DEFAULT 'impression'`);
+  await q(`ALTER TABLE user_ads ADD INDEX IF NOT EXISTS idx_user_ads_live (status, start_date, end_date)`);
 
   await q(`CREATE TABLE IF NOT EXISTS user_ad_payments (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -158,22 +158,13 @@ export async function initBanAdsTables(poolInstance) {
 
 // ── Auth Middleware ────────────────────────────────────────────────────────
 import jwt from 'jsonwebtoken';
-const JWT_SECRET = process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION_32chars+';
+const getJwtSecret = () => process.env.JWT_SECRET || 'CHANGE_ME_IN_PRODUCTION_32chars+';
 
 function requireAuth(req, res, next) {
   const token = req.headers.authorization?.replace('Bearer ', '');
-
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  try {
-    req.user = jwt.verify(token, JWT_SECRET);
-    next();
-  } catch (err) {
-    console.log('USER ADS JWT ERROR:', err.message);
-    return res.status(401).json({ error: 'Invalid token' });
-  }
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  try { req.user = jwt.verify(token, getJwtSecret()); next(); }
+  catch { res.status(401).json({ error: 'Invalid token' }); }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -437,8 +428,8 @@ router.post('/user-ads', requireAuth, async (req, res) => {
   }
 
   try {
-    // Check if user has enough balance
-    if (budget > 0) {
+    // Balance is checked before live delivery; creation can remain pending for admin review.
+    if (false && budget > 0) {
       const [bal] = await pool.query('SELECT balance FROM ad_balance WHERE user_id=?', [req.user.id]);
       const balance = bal[0]?.balance || 0;
       if (balance < budget) {
@@ -588,10 +579,11 @@ router.get('/all-ads', async (req, res) => {
        FROM user_ads ua WHERE ua.status='approved' AND ua.${col}=1
          AND ua.start_date <= CURDATE() AND ua.end_date >= CURDATE()
          AND (ua.budget = 0 OR ua.spent < ua.budget)
+         AND EXISTS (SELECT 1 FROM ad_balance ab WHERE ab.user_id=ua.user_id AND ab.balance > 0)
        ORDER BY RAND() LIMIT 1`
     );
 
-    let combined = [...sysAds, ...userAds];
+    let combined = [...sysAds, ...userAds].sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0));
     if (!combined.length) {
       const [fallbackSys] = await pool.query(
         `SELECT id, title, description, ad_type, media_url, media_type, cta_text, cta_url,
@@ -613,19 +605,26 @@ router.get('/all-ads', async (req, res) => {
            AND (ua.placement_status=1 OR ua.placement_chat=1 OR ua.placement_calls=1 OR ua.placement_home=1)
            AND ua.start_date <= CURDATE() AND ua.end_date >= CURDATE()
            AND (ua.budget = 0 OR ua.spent < ua.budget)
+           AND EXISTS (SELECT 1 FROM ad_balance ab WHERE ab.user_id=ua.user_id AND ab.balance > 0)
          ORDER BY RAND() LIMIT 1`
       );
       combined = [...fallbackSys, ...fallbackUser].slice(0, 1);
     }
 
     res.json(combined);
-  } catch(e) { res.json([]); }
+  } catch(e) {
+    console.error('all-ads:', e.message);
+    res.json([]);
+  }
 });
 
 async function chargeUserAdEvent(adId, eventType, viewerUserId, placement, leadData = null) {
   const [ads] = await pool.query('SELECT * FROM user_ads WHERE id=?', [adId]);
   if (!ads.length || !['approved'].includes(ads[0].status)) return false;
   const ad = ads[0];
+  if (Number(ad.budget || 0) > 0 && Number(ad.spent || 0) >= Number(ad.budget || 0)) return false;
+  const [[balance]] = await pool.query('SELECT balance FROM ad_balance WHERE user_id=?', [ad.user_id]);
+  const walletBalance = Number(balance?.balance || 0);
   const costMap = {
     impression: Number(ad.cost_per_impression || 0),
     click: Number(ad.cost_per_click || 0),
@@ -635,6 +634,7 @@ async function chargeUserAdEvent(adId, eventType, viewerUserId, placement, leadD
     lead: Number(ad.cost_per_lead || ad.cost_per_click || 0)
   };
   const cost = costMap[eventType] ?? 0;
+  if (cost > 0 && walletBalance <= 0) return false;
   if (eventType === 'impression') {
     await pool.query('UPDATE user_ads SET impressions=impressions+1, spent=spent+? WHERE id=?', [cost, adId]);
   } else if (eventType === 'lead') {

@@ -560,7 +560,8 @@ router.put('/user-ads/:id/review', requireAdmin, requirePermission('manage_ads')
       fields.push('verification_required=1', 'verification_fields=?', "verification_status='requested'");
       vals.push(JSON.stringify(verificationFields || []));
     }
-    if (status === 'approved') fields.push("verification_status='approved'");
+    if (status === 'approved') fields.push("verification_required=0", "verification_status='approved'");
+    if (status === 'rejected') fields.push("verification_status='rejected'");
     vals.push(req.params.id);
     await pool.query(`UPDATE user_ads SET ${fields.join(',')} WHERE id=?`, vals);
     emitToUser(ad.user_id, 'user-ad-reviewed', { adId: parseInt(req.params.id), status, rejectReason: rejectReason || null, verificationFields, title: ad.title });

@@ -1,7 +1,4 @@
-// ════════════════════════════════════════════════════════════════════════════
-//  ChatApp  —  main.js   PART 1 / 4
-//  Styles · DOM refs · State · Helpers · Auth · Socket Init
-// ════════════════════════════════════════════════════════════════════════════
+
 
 /* ── Inject CSS for new features ─────────────────────────────────────────── */
 (function injectStyles() {
@@ -700,8 +697,6 @@ function ensureAdsManagerEntry(){
     </div>`;
     document.getElementById('sidebarEl')?.appendChild(panel);
   }
-  document.getElementById('adsOpenManagerBtn')?.addEventListener('click',()=>openUserAdsPanel());
-  document.getElementById('adsOpenPaymentsBtn')?.addEventListener('click',()=>{openUserAdsPanel();setTimeout(()=>document.querySelector('[data-uads-tab="payments"]')?.click(),50);});
   if(!document.querySelector('[data-panel="ads"]')){
     const btn=document.createElement('button');
     btn.className='dtab';
@@ -721,44 +716,30 @@ function ensureAdsManagerEntry(){
   }
 }
 
+document.addEventListener('click', e => {
+  const managerBtn = e.target.closest?.('#adsOpenManagerBtn');
+  const paymentBtn = e.target.closest?.('#adsOpenPaymentsBtn');
+  if (!managerBtn && !paymentBtn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openUserAdsPanel(paymentBtn ? 'payments' : 'create');
+});
+
 async function renderAdsQuickPanel(){
-  const el = document.getElementById('adsQuickSummary');
-  if(!el) return;
-
-  const token = localStorage.getItem('chatapp_token');
-
-  if(!token){
-    el.innerHTML = `<small>Please login again</small>`;
-    return;
-  }
-
+  const el=document.getElementById('adsQuickSummary');
+  if(!el)return;
   try{
-    const r = await fetch('/api/ads/diagnostics', {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + token
-      }
-    });
-
-    const d = await r.json().catch(() => ({}));
-
-    if(!r.ok){
-      el.innerHTML = `<small>${d.error || 'Ads summary not available'}</small>`;
-      return;
-    }
-
-    const b = d.balance || {};
-    const t = d.totals || {};
-
-    el.innerHTML = `<div class="ads-manager-stat">
-      <div><strong>₹${Number(b.balance || 0).toFixed(2)}</strong><small>Wallet balance</small></div>
-      <div><strong>₹${Number(t.spent || 0).toFixed(2)}</strong><small>Total spent</small></div>
-      <div><strong>${Number(t.impressions || 0).toLocaleString()}</strong><small>Impressions</small></div>
-      <div><strong>${Number(t.clicks || 0).toLocaleString()}</strong><small>Clicks</small></div>
+    const d=await api('GET','/api/ads/diagnostics');
+    const b=d.balance||{};
+    const t=d.totals||{};
+    el.innerHTML=`<div class="ads-manager-stat">
+      <div><strong>₹${Number(b.balance||0).toFixed(2)}</strong><small>Wallet balance</small></div>
+      <div><strong>₹${Number(t.spent||0).toFixed(2)}</strong><small>Total spent</small></div>
+      <div><strong>${Number(t.impressions||0).toLocaleString()}</strong><small>Impressions</small></div>
+      <div><strong>${Number(t.clicks||0).toLocaleString()}</strong><small>Clicks</small></div>
     </div>`;
   }catch(e){
-    el.innerHTML = `<small>${e.message}</small>`;
+    el.innerHTML=`<small>${e.message}</small>`;
   }
 }
 
@@ -768,7 +749,8 @@ async function loadInAppAds(){
     const placement=activePanel==='panelStatus'?'status':activePanel==='panelCalls'?'calls':activePanel==='panelChats'?'chat':'home';
     const stripId=placement==='status'?'statusAdsStrip':placement==='calls'?'callsAdsStrip':'homeAdsStrip';
     document.querySelectorAll('.inapp-ad-strip').forEach(el=>el.classList.remove('show'));
-    const ads=await api('GET',`/api/all-ads?placement=${placement}`);
+    const r=await fetch(`/api/all-ads?placement=${encodeURIComponent(placement)}`);
+    const ads=await r.json().catch(()=>[]);
     const ad=ads?.[0];
     const strip=document.getElementById(stripId);
     if(!strip||!ad){if(strip)strip.classList.remove('show');return;}
@@ -836,7 +818,7 @@ function openLeadForm(ad,placement){
   };
 }
 
-function openUserAdsPanel(){
+function openUserAdsPanel(defaultTab='create'){
   if(!myToken){
     showToast('Please login first.');
     return;
@@ -844,7 +826,8 @@ function openUserAdsPanel(){
   ensureUserAdsModal();
   document.getElementById('userAdsModal').style.display='flex';
   refreshUserAdsBalance();
-  loadUserAdsCampaigns();
+  const tabBtn=document.querySelector(`[data-uads-tab="${defaultTab}"]`) || document.querySelector('[data-uads-tab="create"]');
+  if(tabBtn)switchUserAdsTab(tabBtn.dataset.uadsTab,tabBtn);
 }
 
 function ensureUserAdsModal(){
@@ -883,7 +866,7 @@ function ensureUserAdsModal(){
         <div class="user-ads-field"><label>Call number</label><input id="uAdPhone" placeholder="+91..."></div>
         <div class="user-ads-field"><label>WhatsApp number</label><input id="uAdWhatsapp" placeholder="+91..."></div>
         <div class="user-ads-field" style="grid-column:1/-1"><label>Lead fields</label><input id="uAdLeadFields" placeholder="Name, Phone, City"></div>
-        <div class="user-ads-field"><label>Budget</label><input id="uAdBudget" type="number" min="0" value="100"></div>
+        <div class="user-ads-field"><label>Budget</label><input id="uAdBudget" type="number" min="0" value="0"></div>
         <div class="user-ads-field"><label>Daily budget</label><input id="uAdDailyBudget" type="number" min="0" value="50"></div>
         <div class="user-ads-field"><label>Cost per click</label><input id="uAdCpc" type="number" min="0" step="0.01" value="1"></div>
         <div class="user-ads-field"><label>Cost per impression</label><input id="uAdCpm" type="number" min="0" step="0.01" value="0.10"></div>
@@ -924,6 +907,7 @@ function switchUserAdsTab(tab,btn){
   const create=document.getElementById('userAdsCreatePane');
   const stmt=document.getElementById('userAdsStatement');
   create.style.display=tab==='create'?'block':'none';
+  stmt.style.display=tab==='create'?'none':'grid';
   stmt.innerHTML='';
   if(tab==='campaigns')loadUserAdsCampaigns();
   if(tab==='payments')loadUserAdsPayments();
@@ -970,12 +954,18 @@ async function loadUserAdsSpend(){
 
 async function submitAdDocuments(adId){
   const docs={};
-  const aadhaar=prompt('Aadhaar card/details');
-  if(aadhaar!==null)docs.aadhaar=aadhaar;
-  const pan=prompt('PAN card/details');
-  if(pan!==null)docs.pan=pan;
-  const extra=prompt('Other details requested by admin');
-  if(extra!==null)docs.extra=extra;
+  let ad=null;
+  try{
+    const ads=await api('GET','/api/user-ads');
+    ad=ads.find(x=>Number(x.id)===Number(adId));
+  }catch{}
+  let fields=[];
+  try{fields=typeof ad?.verification_fields==='string'?JSON.parse(ad.verification_fields):(ad?.verification_fields||[]);}catch{fields=[];}
+  if(!fields.length)fields=['Aadhaar Card','PAN Card','Other details'];
+  for(const field of fields){
+    const value=prompt(`${field} details`);
+    if(value!==null)docs[field]=value;
+  }
   try{
     await api('PUT',`/api/user-ads/${adId}`,{verificationDocuments:docs});
     showToast('Documents submitted');
@@ -1011,6 +1001,9 @@ async function topupUserAdsBalance(){
   const amount=Number(document.getElementById('userAdsTopupAmount').value||0);
   if(amount<1)return showToast('Enter amount first');
   try{
+    const gateways=await api('GET','/api/payment/gateways/active');
+    const razorpay=gatewayListFind(gateways,'razorpay');
+    if(!razorpay?.key_id)throw new Error('Razorpay is not active. Please contact admin.');
     await loadRazorpayScript();
     const order=await api('POST','/api/payment/create-order',{amount,currency:'INR'});
     const rz=new Razorpay({
@@ -1020,11 +1013,16 @@ async function topupUserAdsBalance(){
         await api('POST','/api/payment/verify',{orderId:resp.razorpay_order_id,paymentId:resp.razorpay_payment_id,signature:resp.razorpay_signature,amount});
         showToast('Balance added');
         refreshUserAdsBalance();
+        loadUserAdsPayments();
       },
       prefill:{name:myUser?.username||'',email:myUser?.email||''}
     });
     rz.open();
   }catch(e){showToast(e.message);}
+}
+
+function gatewayListFind(gateways,name){
+  return Array.isArray(gateways)?gateways.find(g=>g.name===name):null;
 }
 
 async function submitUserAdCampaign(){
