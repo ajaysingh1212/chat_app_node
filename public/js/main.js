@@ -335,6 +335,7 @@ let isCallOnHold=false;
 let heldCallSenders=[],heldCallName=null;
 let callHistoryFilter='all',callHistoryFrom='',callHistoryTo='',lastCallHistory=[];
 let selectedCallIds=new Set();
+let currentUserAdStep=1;
 const typingUsers=new Set();
 const peerConnections={},iceCandidateQueue={},pendingOffers={};
 let liveMapInstance=null,liveMarker=null;
@@ -646,16 +647,56 @@ function ensureUserAdsUi(){
     .inapp-ad-cta{border:1px solid #00bfa5;background:rgba(0,191,165,.12);color:#00bfa5;border-radius:7px;padding:7px 9px;font-size:11px;font-weight:700;cursor:pointer}
     .user-ads-entry{margin-top:8px;padding:10px 14px;border:1px solid #223045;border-radius:8px;background:#131d29;color:#d8e4f0;width:100%;text-align:left;cursor:pointer}
     .user-ads-modal{position:fixed;inset:0;z-index:980;background:rgba(0,0,0,.76);display:none;align-items:center;justify-content:center;padding:16px}
-    .user-ads-card{width:min(920px,96vw);max-height:92vh;overflow:auto;background:#111a24;border:1px solid #223045;border-radius:14px;padding:18px}
+    .user-ads-card{width:min(1180px,96vw);max-height:92vh;overflow:auto;background:#0f1722;border:1px solid #223045;border-radius:12px;padding:0}
     .user-ads-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.user-ads-head h3{font-size:18px}
+    .user-ads-topbar{position:sticky;top:0;z-index:2;background:#101a25;border-bottom:1px solid #223045;padding:14px 16px}
+    .user-ads-workspace{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16px}
+    .uads-builder{min-width:0}.uads-preview-rail{position:sticky;top:78px;align-self:start;border:1px solid #223045;background:#101a25;border-radius:10px;padding:12px}
+    .uads-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}.uads-step-pill{border:1px solid #223045;background:#131d29;color:#8aa0b6;border-radius:8px;padding:9px 10px;text-align:left;cursor:pointer;font-size:12px;font-weight:700}.uads-step-pill.active{border-color:#00bfa5;background:rgba(0,191,165,.12);color:#d8fff8}
+    .uads-step{display:none;border:1px solid #223045;background:#111b27;border-radius:10px;padding:14px}.uads-step.active{display:block}.uads-step-title{font-size:15px;font-weight:800;color:#d8e4f0;margin-bottom:10px}
     .user-ads-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.user-ads-field label{display:block;font-size:11px;color:#6a8098;margin-bottom:4px}
     .user-ads-field input,.user-ads-field textarea,.user-ads-field select{width:100%;background:#172231;border:1px solid #2a3d56;color:#d8e4f0;border-radius:8px;padding:10px;font-family:var(--font)}
+    .uads-choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.uads-choice{border:1px solid #223045;background:#131d29;border-radius:8px;padding:10px;cursor:pointer;color:#d8e4f0}.uads-choice input{margin-right:6px}.uads-choice strong{display:block;font-size:13px}.uads-choice small{display:block;color:#6a8098;margin-top:3px;line-height:1.35}
+    .uads-action-panel{display:none}.uads-action-panel.active{display:block}.uads-placement-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.uads-placement{border:1px solid #223045;background:#131d29;border-radius:8px;padding:10px;color:#d8e4f0;cursor:pointer}.uads-placement input{margin-right:6px}.uads-placement small{display:block;color:#6a8098;margin-top:3px}
+    .uads-preview-title{font-size:13px;font-weight:800;color:#d8e4f0;margin-bottom:10px}.uads-preview-list{display:grid;gap:10px}.uads-phone-preview{border:1px solid #243247;background:#0b131d;border-radius:10px;overflow:hidden}.uads-preview-label{font-size:11px;color:#8aa0b6;padding:7px 9px;border-bottom:1px solid #223045;background:#131d29}.uads-preview-ad{display:flex;gap:9px;align-items:center;padding:10px}.uads-preview-media{width:52px;height:52px;border-radius:8px;background:#223045;object-fit:cover;flex-shrink:0}.uads-preview-copy{min-width:0;flex:1}.uads-preview-head{font-size:12px;font-weight:800;color:#d8e4f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.uads-preview-desc{font-size:11px;color:#8aa0b6;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.uads-preview-btn{border:1px solid #00bfa5;color:#00bfa5;background:rgba(0,191,165,.1);border-radius:7px;padding:6px 8px;font-size:11px;font-weight:800;white-space:nowrap}.uads-status-preview{display:block}.uads-status-preview .uads-preview-media{width:100%;height:122px;border-radius:0}.uads-status-preview .uads-preview-ad{display:block}.uads-status-preview .uads-preview-copy{padding-top:8px}.uads-call-preview .uads-preview-media{width:38px;height:38px;border-radius:50%}
+    .uads-helper{font-size:12px;color:#8aa0b6;line-height:1.45;margin-top:8px}.uads-error{display:none;margin-top:10px;color:#fc8181;font-size:12px}.uads-error.show{display:block}
     .user-ads-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}.user-ads-checks{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;color:#d8e4f0;font-size:12px}
     .user-ads-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.user-ads-tabs button{border:1px solid #2a3d56;background:#172231;color:#d8e4f0;border-radius:8px;padding:8px 10px;cursor:pointer}.user-ads-tabs button.active{border-color:#00bfa5;color:#00bfa5}
     .user-ads-list{display:grid;gap:8px;margin-top:12px}.user-ads-row{border:1px solid #223045;border-radius:8px;padding:10px;background:#131d29;color:#d8e4f0}.user-ads-row small{color:#6a8098}
     .ads-manager-panel{padding:14px;color:#d8e4f0}.ads-manager-title{font-size:18px;font-weight:700;margin-bottom:4px}.ads-manager-sub{font-size:12px;color:#6a8098;margin-bottom:12px;line-height:1.5}.ads-manager-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.ads-manager-card{border:1px solid #223045;background:#131d29;border-radius:8px;padding:10px;margin-bottom:8px}.ads-manager-stat{display:grid;grid-template-columns:1fr 1fr;gap:8px}.ads-manager-stat div{border:1px solid #223045;border-radius:8px;padding:9px;background:#101a25}.ads-manager-stat strong{display:block;color:#00bfa5;font-size:16px}
     .lead-form-overlay{position:fixed;inset:0;z-index:990;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:16px}.lead-form-card{width:min(420px,94vw);background:#111a24;border:1px solid #223045;border-radius:12px;padding:16px}
-    @media(max-width:700px){.user-ads-grid{grid-template-columns:1fr}.user-ads-actions{flex-direction:column}}
+    @media(max-width:900px){.user-ads-workspace{grid-template-columns:1fr}.uads-preview-rail{position:relative;top:auto}.uads-steps{grid-template-columns:1fr 1fr}.uads-placement-grid{grid-template-columns:1fr 1fr}}
+    @media(max-width:700px){.user-ads-grid,.uads-choice-grid{grid-template-columns:1fr}.user-ads-actions{flex-direction:column}}
+    .user-ads-modal{backdrop-filter:blur(8px)}
+    .user-ads-card{box-shadow:0 18px 70px rgba(0,0,0,.55)}
+    .user-ads-head h3{font-size:19px;letter-spacing:0;color:#f1f7fb}
+    .user-ads-topbar{background:#0e1824}
+    .user-ads-tabs{margin-bottom:0}
+    .user-ads-tabs button,.uads-step-pill,.inapp-ad-cta,.media-preview-send,.fpc-cancel{min-height:36px}
+    .user-ads-tabs button{font-weight:800;color:#9fb0c2}
+    .user-ads-tabs button.active{background:rgba(0,191,165,.1)}
+    .uads-step-pill{display:flex;align-items:center;gap:6px;justify-content:flex-start}
+    .uads-step-pill::before{content:attr(data-uads-step-btn);display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#0b131d;color:#8aa0b6;border:1px solid #26364c;font-size:11px}
+    .uads-step-pill.active::before{background:#00bfa5;color:#001b18;border-color:#00bfa5}
+    .uads-step{min-height:430px}
+    .uads-step-title{font-size:16px;padding-bottom:10px;border-bottom:1px solid #223045}
+    .user-ads-field input,.user-ads-field textarea,.user-ads-field select{min-height:42px;outline:none;transition:border-color .12s,box-shadow .12s;background:#101a25}
+    .user-ads-field textarea{min-height:92px;resize:vertical}
+    .user-ads-field input:focus,.user-ads-field textarea:focus,.user-ads-field select:focus{border-color:#00bfa5;box-shadow:0 0 0 3px rgba(0,191,165,.1)}
+    .uads-choice,.uads-placement{transition:border-color .12s,background .12s,transform .12s}
+    .uads-choice:hover,.uads-placement:hover{border-color:#31506b;background:#162334}
+    .uads-choice:has(input:checked),.uads-placement:has(input:checked){border-color:#00bfa5;background:rgba(0,191,165,.1)}
+    .uads-placement{min-height:84px}
+    .uads-preview-rail{box-shadow:0 10px 28px rgba(0,0,0,.25)}
+    .uads-preview-title{display:flex;align-items:center;justify-content:space-between}
+    .uads-preview-title::after{content:'Live';font-size:10px;color:#001b18;background:#00bfa5;border-radius:999px;padding:3px 7px}
+    .uads-preview-media:not([src]){background:linear-gradient(135deg,#182638,#24364d)}
+    .uads-status-preview .uads-preview-media:not([src]){background:linear-gradient(135deg,#172231,#1d3d3a)}
+    .user-ads-actions{position:sticky;bottom:0;background:#0f1722;border-top:1px solid #223045;padding-top:12px}
+    #uAdSubmitBtn{background:#00bfa5;color:#001b18;border:none}
+    #uAdNextStepBtn{display:inline-flex;align-items:center;justify-content:center}
+    #uAdError{border:1px solid rgba(252,129,129,.35);background:rgba(229,62,62,.12);border-radius:8px;padding:9px}
+    @media(max-width:700px){.user-ads-modal{padding:0}.user-ads-card{width:100vw;height:100vh;max-height:none;border-radius:0;border:0}.user-ads-workspace{padding:12px}.uads-step{min-height:auto}.uads-steps{grid-template-columns:1fr 1fr}.uads-preview-list{grid-template-columns:1fr}.user-ads-topbar{padding:12px}}
   `;
   document.head.appendChild(style);
   const makeStrip=(id)=> {
@@ -823,7 +864,7 @@ function openUserAdsPanel(defaultTab='create'){
     showToast('Please login first.');
     return;
   }
-  ensureUserAdsModal();
+  ensureUserAdsModalV2();
   document.getElementById('userAdsModal').style.display='flex';
   refreshUserAdsBalance();
   const tabBtn=document.querySelector(`[data-uads-tab="${defaultTab}"]`) || document.querySelector('[data-uads-tab="create"]');
@@ -900,6 +941,207 @@ function ensureUserAdsModal(){
     const f=e.target.files?.[0];
     document.getElementById('uAdPreview').textContent=f?`Selected: ${f.name}`:'';
   };
+}
+
+function ensureUserAdsModalV2(){
+  if(document.getElementById('userAdsModal'))return;
+  const modal=document.createElement('div');
+  modal.id='userAdsModal';
+  modal.className='user-ads-modal';
+  const today=new Date().toISOString().slice(0,10);
+  const end=new Date(Date.now()+7*864e5).toISOString().slice(0,10);
+  modal.innerHTML=`
+    <div class="user-ads-card">
+      <div class="user-ads-topbar">
+        <div class="user-ads-head" style="margin-bottom:10px">
+          <div>
+            <h3>Campaign Builder</h3>
+            <div style="font-size:12px;color:#8aa0b6;margin-top:3px">Build, preview, fund, and submit your ad for approval.</div>
+          </div>
+          <button class="rp-close" id="closeUserAdsModal">x</button>
+        </div>
+        <div style="display:flex;gap:10px;align-items:end;margin-bottom:14px;flex-wrap:wrap">
+          <div style="font-size:13px;color:#d8e4f0">Balance: <strong id="userAdsBalance">0</strong></div>
+          <input id="userAdsTopupAmount" type="number" min="1" placeholder="Amount" style="width:120px;background:#172231;border:1px solid #2a3d56;color:#d8e4f0;border-radius:8px;padding:9px">
+          <button class="inapp-ad-cta" id="userAdsTopupBtn">Add balance</button>
+        </div>
+        <div class="user-ads-tabs">
+          <button class="active" data-uads-tab="create">Create</button>
+          <button data-uads-tab="campaigns">Campaigns</button>
+          <button data-uads-tab="payments">Payments</button>
+          <button data-uads-tab="spend">Spend</button>
+        </div>
+      </div>
+      <div id="userAdsStatement" class="user-ads-list" style="padding:0 16px 16px"></div>
+      <div id="userAdsCreatePane">
+        <div class="user-ads-workspace">
+          <div class="uads-builder">
+            <div class="uads-steps">
+              <button class="uads-step-pill active" data-uads-step-btn="1">Goal</button>
+              <button class="uads-step-pill" data-uads-step-btn="2">Creative</button>
+              <button class="uads-step-pill" data-uads-step-btn="3">Audience</button>
+              <button class="uads-step-pill" data-uads-step-btn="4">Budget</button>
+            </div>
+            <div class="uads-step active" data-uads-step="1">
+              <div class="uads-step-title">Choose campaign goal and tap action</div>
+              <div class="uads-choice-grid">
+                <label class="uads-choice"><input type="radio" name="uAdObjective" value="traffic" checked><strong>Website traffic</strong><small>Send people to a landing page or product link.</small></label>
+                <label class="uads-choice"><input type="radio" name="uAdObjective" value="messages"><strong>Messages</strong><small>Drive WhatsApp or phone conversations.</small></label>
+                <label class="uads-choice"><input type="radio" name="uAdObjective" value="leads"><strong>Lead generation</strong><small>Collect customer details through an in-app form.</small></label>
+                <label class="uads-choice"><input type="radio" name="uAdObjective" value="awareness"><strong>Reach & awareness</strong><small>Show your brand across app placements.</small></label>
+              </div>
+              <div class="user-ads-grid" style="margin-top:12px">
+                <div class="user-ads-field"><label>Action after tap</label><select id="uAdAction"><option value="website">Open website</option><option value="call">Call number</option><option value="whatsapp">Open WhatsApp</option><option value="lead">Show lead form</option></select></div>
+                <div class="user-ads-field"><label>CTA text</label><input id="uAdCtaText" maxlength="28" value="Learn More"></div>
+              </div>
+              <div class="uads-action-panel active" data-action-panel="website"><div class="user-ads-field" style="margin-top:10px"><label>Website URL</label><input id="uAdCtaUrl" type="url" placeholder="https://example.com/product"></div></div>
+              <div class="uads-action-panel" data-action-panel="call"><div class="user-ads-field" style="margin-top:10px"><label>Calling number</label><input id="uAdPhone" placeholder="+91XXXXXXXXXX"></div></div>
+              <div class="uads-action-panel" data-action-panel="whatsapp"><div class="user-ads-field" style="margin-top:10px"><label>WhatsApp number</label><input id="uAdWhatsapp" placeholder="+91XXXXXXXXXX"></div></div>
+              <div class="uads-action-panel" data-action-panel="lead"><div class="user-ads-field" style="margin-top:10px"><label>Lead form fields</label><input id="uAdLeadFields" value="Name, Phone, City" placeholder="Name, Phone, City"></div></div>
+            </div>
+            <div class="uads-step" data-uads-step="2">
+              <div class="uads-step-title">Create the ad people will see</div>
+              <div class="user-ads-grid">
+                <div class="user-ads-field"><label>Headline</label><input id="uAdTitle" maxlength="120" placeholder="Summer sale is live"></div>
+                <div class="user-ads-field"><label>Advertiser name</label><input id="uAdAdvertiser" maxlength="120" placeholder="Your business name"></div>
+                <div class="user-ads-field" style="grid-column:1/-1"><label>Primary text</label><textarea id="uAdDesc" rows="3" placeholder="Tell people what you offer and why they should tap."></textarea></div>
+                <div class="user-ads-field"><label>Media</label><input id="uAdMedia" type="file" accept="image/*,video/*"></div>
+                <div class="user-ads-field"><label>Format</label><select id="uAdFormat"><option value="banner">Banner</option><option value="status">Status creative</option><option value="chat">Chat card</option></select></div>
+              </div>
+              <div id="uAdPreview" class="uads-helper">Preview updates as you type.</div>
+            </div>
+            <div class="uads-step" data-uads-step="3">
+              <div class="uads-step-title">Audience and placements</div>
+              <div class="user-ads-grid">
+                <div class="user-ads-field"><label>Gender</label><select id="uAdGender"><option value="all">All</option><option value="male">Male</option><option value="female">Female</option></select></div>
+                <div class="user-ads-field"><label>Location</label><input id="uAdLocation" placeholder="City, state, country"></div>
+                <div class="user-ads-field"><label>Minimum age</label><input id="uAdAgeMin" type="number" min="13" max="100" value="18"></div>
+                <div class="user-ads-field"><label>Maximum age</label><input id="uAdAgeMax" type="number" min="13" max="100" value="65"></div>
+                <div class="user-ads-field" style="grid-column:1/-1"><label>Interest keywords</label><input id="uAdInterests" placeholder="shopping, food, coaching, real estate"></div>
+              </div>
+              <div class="uads-helper">Choose where the ad can appear after admin approval.</div>
+              <div class="uads-placement-grid" style="margin-top:8px">
+                <label class="uads-placement"><input id="uAdPlaceStatus" type="checkbox" checked>Status<small>Between status updates</small></label>
+                <label class="uads-placement"><input id="uAdPlaceChat" type="checkbox" checked>Chats<small>Inside chat list</small></label>
+                <label class="uads-placement"><input id="uAdPlaceCalls" type="checkbox">Calls<small>Above call logs</small></label>
+                <label class="uads-placement"><input id="uAdPlaceHome" type="checkbox" checked>Home<small>Lobby placement</small></label>
+              </div>
+            </div>
+            <div class="uads-step" data-uads-step="4">
+              <div class="uads-step-title">Budget, bid, and schedule</div>
+              <div class="user-ads-grid">
+                <div class="user-ads-field"><label>Total budget</label><input id="uAdBudget" type="number" min="0" value="0"></div>
+                <div class="user-ads-field"><label>Daily budget</label><input id="uAdDailyBudget" type="number" min="0" value="50"></div>
+                <div class="user-ads-field"><label>Cost per click/action</label><input id="uAdCpc" type="number" min="0" step="0.01" value="1"></div>
+                <div class="user-ads-field"><label>Cost per impression</label><input id="uAdCpm" type="number" min="0" step="0.01" value="0.10"></div>
+                <div class="user-ads-field"><label>Cost per lead</label><input id="uAdCpl" type="number" min="0" step="0.01" value="5"></div>
+                <div class="user-ads-field"><label>Start date</label><input id="uAdStart" type="date" value="${today}"></div>
+                <div class="user-ads-field"><label>End date</label><input id="uAdEnd" type="date" value="${end}"></div>
+              </div>
+              <div class="uads-helper">Ads are submitted as pending. Admin can approve, reject, hold, or request documents.</div>
+            </div>
+            <div id="uAdError" class="uads-error"></div>
+            <div class="user-ads-actions">
+              <button class="fpc-cancel" id="uAdPrevStepBtn">Back</button>
+              <button class="inapp-ad-cta" id="uAdNextStepBtn">Next</button>
+              <button class="media-preview-send" id="uAdSubmitBtn">Submit for approval</button>
+            </div>
+          </div>
+          <aside class="uads-preview-rail">
+            <div class="uads-preview-title">Live placement preview</div>
+            <div class="uads-preview-list">
+              <div class="uads-phone-preview"><div class="uads-preview-label">Chat list</div><div class="uads-preview-ad"><img class="uads-preview-media" data-uads-prev-media><div class="uads-preview-copy"><div class="uads-preview-head" data-uads-prev-title>Ad headline</div><div class="uads-preview-desc" data-uads-prev-desc>Your ad text appears here</div></div><button class="uads-preview-btn" data-uads-prev-cta>Learn More</button></div></div>
+              <div class="uads-phone-preview uads-status-preview"><div class="uads-preview-label">Status</div><img class="uads-preview-media" data-uads-prev-media-status><div class="uads-preview-ad"><div class="uads-preview-copy"><div class="uads-preview-head" data-uads-prev-title>Status ad</div><div class="uads-preview-desc" data-uads-prev-desc>Status preview text</div></div><button class="uads-preview-btn" data-uads-prev-cta>Learn More</button></div></div>
+              <div class="uads-phone-preview uads-call-preview"><div class="uads-preview-label">Call log</div><div class="uads-preview-ad"><img class="uads-preview-media" data-uads-prev-media><div class="uads-preview-copy"><div class="uads-preview-head" data-uads-prev-title>Sponsored call card</div><div class="uads-preview-desc" data-uads-prev-desc>Tap action preview</div></div><button class="uads-preview-btn" data-uads-prev-cta>Call</button></div></div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('closeUserAdsModal').onclick=()=>modal.style.display='none';
+  modal.addEventListener('click',e=>{if(e.target===modal)modal.style.display='none';});
+  document.getElementById('userAdsTopupBtn').onclick=topupUserAdsBalance;
+  document.getElementById('uAdSubmitBtn').onclick=submitUserAdCampaign;
+  document.getElementById('uAdPrevStepBtn').onclick=()=>setUserAdStep(currentUserAdStep-1);
+  document.getElementById('uAdNextStepBtn').onclick=()=>setUserAdStep(currentUserAdStep+1);
+  modal.querySelectorAll('[data-uads-tab]').forEach(btn=>btn.onclick=()=>switchUserAdsTab(btn.dataset.uadsTab,btn));
+  modal.querySelectorAll('[data-uads-step-btn]').forEach(btn=>btn.onclick=()=>setUserAdStep(Number(btn.dataset.uadsStepBtn)));
+  modal.querySelectorAll('input,textarea,select').forEach(el=>el.addEventListener('input',()=>{updateUserAdActionFields();updateUserAdPreview();}));
+  document.getElementById('uAdMedia').onchange=e=>{
+    const f=e.target.files?.[0];
+    if(f){
+      if(window.uAdMediaObjectUrl)URL.revokeObjectURL(window.uAdMediaObjectUrl);
+      window.uAdMediaObjectUrl=URL.createObjectURL(f);
+      document.getElementById('uAdPreview').textContent=`Selected: ${f.name}`;
+    }
+    updateUserAdPreview();
+  };
+  updateUserAdActionFields();
+  updateUserAdPreview();
+  setUserAdStep(1);
+}
+
+function setUserAdStep(step){
+  currentUserAdStep=Math.max(1,Math.min(4,Number(step)||1));
+  document.querySelectorAll('[data-uads-step]').forEach(el=>el.classList.toggle('active',Number(el.dataset.uadsStep)===currentUserAdStep));
+  document.querySelectorAll('[data-uads-step-btn]').forEach(el=>el.classList.toggle('active',Number(el.dataset.uadsStepBtn)===currentUserAdStep));
+  const prev=document.getElementById('uAdPrevStepBtn'),next=document.getElementById('uAdNextStepBtn'),submit=document.getElementById('uAdSubmitBtn');
+  if(prev)prev.style.visibility=currentUserAdStep===1?'hidden':'visible';
+  if(next)next.style.display=currentUserAdStep===4?'none':'inline-flex';
+  if(submit)submit.style.display=currentUserAdStep===4?'inline-flex':'none';
+}
+
+function updateUserAdActionFields(){
+  const action=document.getElementById('uAdAction')?.value||'website';
+  document.querySelectorAll('[data-action-panel]').forEach(p=>p.classList.toggle('active',p.dataset.actionPanel===action));
+  const cta=document.getElementById('uAdCtaText');
+  if(!cta)return;
+  const defaults={website:'Learn More',call:'Call Now',whatsapp:'WhatsApp',lead:'Send Details'};
+  if(!cta.dataset.touched && (!cta.value || ['Learn More','Call Now','WhatsApp','Send Details'].includes(cta.value)))cta.value=defaults[action]||'Learn More';
+  cta.oninput=()=>{cta.dataset.touched='1';};
+}
+
+function userAdDraft(){
+  const action=document.getElementById('uAdAction')?.value||'website';
+  return {
+    title:document.getElementById('uAdTitle')?.value.trim()||'Your ad headline',
+    desc:document.getElementById('uAdDesc')?.value.trim()||'Your ad text appears here.',
+    advertiser:document.getElementById('uAdAdvertiser')?.value.trim()||myUser?.username||'Your Brand',
+    cta:document.getElementById('uAdCtaText')?.value.trim()||'Learn More',
+    action,
+    mediaUrl:window.uAdMediaObjectUrl||''
+  };
+}
+
+function updateUserAdPreview(){
+  const d=userAdDraft();
+  document.querySelectorAll('[data-uads-prev-title]').forEach(el=>el.textContent=d.title);
+  document.querySelectorAll('[data-uads-prev-desc]').forEach(el=>el.textContent=d.desc);
+  document.querySelectorAll('[data-uads-prev-cta]').forEach(el=>el.textContent=d.cta);
+  document.querySelectorAll('[data-uads-prev-media], [data-uads-prev-media-status]').forEach(el=>{
+    if(d.mediaUrl){el.src=d.mediaUrl;el.style.display='block';}
+    else{el.removeAttribute('src');el.style.display='block';}
+  });
+}
+
+function validateUserAdCampaign(){
+  const error=document.getElementById('uAdError');
+  const fail=msg=>{if(error){error.textContent=msg;error.classList.add('show');}showToast(msg);return false;};
+  if(error)error.classList.remove('show');
+  const title=document.getElementById('uAdTitle')?.value.trim();
+  const start=document.getElementById('uAdStart')?.value;
+  const end=document.getElementById('uAdEnd')?.value;
+  const action=document.getElementById('uAdAction')?.value;
+  if(!title)return fail('Headline required.');
+  if(!start||!end)return fail('Start and end date required.');
+  if(new Date(end)<new Date(start))return fail('End date must be after start date.');
+  if(action==='website'&&!document.getElementById('uAdCtaUrl')?.value.trim())return fail('Website URL required for website action.');
+  if(action==='call'&&!document.getElementById('uAdPhone')?.value.trim())return fail('Calling number required for call action.');
+  if(action==='whatsapp'&&!document.getElementById('uAdWhatsapp')?.value.trim())return fail('WhatsApp number required for WhatsApp action.');
+  if(action==='lead'&&!document.getElementById('uAdLeadFields')?.value.trim())return fail('Lead fields required for lead form action.');
+  if(!['uAdPlaceStatus','uAdPlaceChat','uAdPlaceCalls','uAdPlaceHome'].some(id=>document.getElementById(id)?.checked))return fail('Select at least one placement.');
+  return true;
 }
 
 function switchUserAdsTab(tab,btn){
@@ -1027,6 +1269,7 @@ function gatewayListFind(gateways,name){
 
 async function submitUserAdCampaign(){
   try{
+    if(!validateUserAdCampaign())return;
     let mediaUrl='',mediaType='image';
     const file=document.getElementById('uAdMedia').files?.[0];
     if(file){
@@ -1038,7 +1281,8 @@ async function submitUserAdCampaign(){
     await api('POST','/api/user-ads',{
       title:document.getElementById('uAdTitle').value.trim(),
       description:document.getElementById('uAdDesc').value.trim(),
-      mediaUrl,mediaType,ctaText:'Learn More',ctaUrl:document.getElementById('uAdCtaUrl').value.trim(),
+      adType:document.getElementById('uAdFormat')?.value||'banner',
+      mediaUrl,mediaType,ctaText:document.getElementById('uAdCtaText').value.trim()||'Learn More',ctaUrl:document.getElementById('uAdCtaUrl').value.trim(),
       actionType:document.getElementById('uAdAction').value,
       phoneNumber:document.getElementById('uAdPhone').value.trim(),
       whatsappNumber:document.getElementById('uAdWhatsapp').value.trim(),
@@ -1055,6 +1299,8 @@ async function submitUserAdCampaign(){
       startDate:document.getElementById('uAdStart').value,
       endDate:document.getElementById('uAdEnd').value,
       targetGender:document.getElementById('uAdGender').value,
+      targetAgeMin:Number(document.getElementById('uAdAgeMin')?.value||18),
+      targetAgeMax:Number(document.getElementById('uAdAgeMax')?.value||65),
       targetLocation:document.getElementById('uAdLocation').value.trim(),
       advertiserName:document.getElementById('uAdAdvertiser').value.trim()||myUser?.username
     });
