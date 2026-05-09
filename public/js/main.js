@@ -722,20 +722,36 @@ function ensureAdsManagerEntry(){
 }
 
 async function renderAdsQuickPanel(){
-  const el=document.getElementById('adsQuickSummary');
-  if(!el)return;
+  const el = document.getElementById('adsQuickSummary');
+  if(!el) return;
+
   try{
-    const d=await api('GET','/api/ads/diagnostics');
-    const b=d.balance||{};
-    const t=d.totals||{};
-    el.innerHTML=`<div class="ads-manager-stat">
-      <div><strong>₹${Number(b.balance||0).toFixed(2)}</strong><small>Wallet balance</small></div>
-      <div><strong>₹${Number(t.spent||0).toFixed(2)}</strong><small>Total spent</small></div>
-      <div><strong>${Number(t.impressions||0).toLocaleString()}</strong><small>Impressions</small></div>
-      <div><strong>${Number(t.clicks||0).toLocaleString()}</strong><small>Clicks</small></div>
+    const r = await fetch('/api/ads/diagnostics', {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + myToken
+      }
+    });
+
+    const d = await r.json().catch(() => ({}));
+
+    if(!r.ok){
+      el.innerHTML = `<small>${d.error || 'Ads summary not available'}</small>`;
+      return;
+    }
+
+    const b = d.balance || {};
+    const t = d.totals || {};
+
+    el.innerHTML = `<div class="ads-manager-stat">
+      <div><strong>₹${Number(b.balance || 0).toFixed(2)}</strong><small>Wallet balance</small></div>
+      <div><strong>₹${Number(t.spent || 0).toFixed(2)}</strong><small>Total spent</small></div>
+      <div><strong>${Number(t.impressions || 0).toLocaleString()}</strong><small>Impressions</small></div>
+      <div><strong>${Number(t.clicks || 0).toLocaleString()}</strong><small>Clicks</small></div>
     </div>`;
   }catch(e){
-    el.innerHTML=`<small>${e.message}</small>`;
+    el.innerHTML = `<small>${e.message}</small>`;
   }
 }
 
