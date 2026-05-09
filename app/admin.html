@@ -272,6 +272,8 @@
           <button class="tab-btn" onclick="loadAds('draft', this)">📝 Draft</button>
           <button class="tab-btn" onclick="loadAds('ended', this)">🔴 Ended</button>
           <button class="tab-btn" onclick="loadUserSubmittedAds('pending', this)">User Pending</button>
+          <button class="tab-btn" onclick="loadAdDiagnostics(this)">Diagnostics</button>
+          <button class="tab-btn" onclick="loadAdPayments(this)">Payments</button>
         </div>
         <div class="ad-card-grid" id="adsGrid">
           <div style="text-align:center;padding:48px;color:var(--text-muted);grid-column:1/-1">Loading campaigns...</div>
@@ -1431,9 +1433,14 @@ async function loadUserSubmittedAds(status = 'pending', btn) {
           <div class="ad-card-meta"><span class="ad-card-type">user ad</span><span class="badge badge-${ad.status}">${ad.status}</span></div>
           <div class="ad-card-title">${ad.title}</div>
           <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">By ${ad.username} · Budget ₹${Number(ad.budget||0).toFixed(2)} · Spent ₹${Number(ad.spent||0).toFixed(2)}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Impr ${Number(ad.impressions||0).toLocaleString()} | Click ${Number(ad.clicks||0).toLocaleString()} | Leads ${Number(ad.leads||0).toLocaleString()} | CPC ₹${Number(ad.cost_per_click||0).toFixed(2)} | CPI ₹${Number(ad.cost_per_impression||0).toFixed(4)}</div>
           <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${ad.description||''}</div>
+          ${ad.verification_status==='submitted'?`<div style="font-size:12px;color:var(--accent);margin-bottom:8px">Documents submitted</div>`:''}
           <div class="ad-card-actions">
             <button class="btn btn-success btn-xs" onclick="reviewUserAd(${ad.id},'approved')">Approve</button>
+            <button class="btn btn-warning btn-xs" onclick="reviewUserAd(${ad.id},'hold')">Hold</button>
+            <button class="btn btn-outline btn-xs" onclick="requestUserAdDocs(${ad.id})">Docs</button>
+            <button class="btn btn-outline btn-xs" onclick="viewUserAdLeads(${ad.id})">Leads</button>
             <button class="btn btn-danger btn-xs" onclick="reviewUserAd(${ad.id},'rejected')">Reject</button>
           </div>
         </div>
@@ -1444,13 +1451,74 @@ async function loadUserSubmittedAds(status = 'pending', btn) {
 
 async function reviewUserAd(adId, status) {
   try {
-    await api('PUT', `/user-ads/${adId}/review`, { status, rejectReason: status === 'rejected' ? 'Rejected by admin' : null });
-    showToast(status === 'approved' ? 'User ad approved' : 'User ad rejected', 'success');
+    let rejectReason = status === 'rejected' ? prompt('Reject reason', 'Rejected by admin') : null;
+    if (status === 'hold') rejectReason = prompt('Hold note', 'Need manual review');
+    await api('PUT', `/user-ads/${adId}/review`, { status, rejectReason });
+    showToast(`User ad ${status}`, 'success');
     loadUserSubmittedAds('pending');
   } catch (e) { showToast(e.message, 'error'); }
 }
 
-function openAdModal(adId = null) {
+async function requestUserAdDocs(adId) {
+  const raw = prompt('Documents/details required (comma separated)', 'Aadhaar Card,PAN Card,Business details');
+  if (raw === null) return;
+  const verificationFields = raw.split(',').map(x => x.trim()).filter(Boolean);
+  try {
+    await api('PUT', `/user-ads/${adId}/review`, { status: 'document_requested', rejectReason: 'Documents required', verificationFields });
+    showToast('Document request sent', 'success');
+    loadUserSubmittedAds('pending');
+  } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function viewUserAdLeads(adId) {
+  const grid = document.getElementById('adsGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:48px;color:var(--text-muted);grid-column:1/-1">Loading leads...</div>';
+  try {
+    const leads = await api('GET', `/user-ads/${adId}/leads`);
+    grid.innerHTML = `
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><div class="card-title">Ad Leads</div><button class="btn btn-outline btn-sm" onclick="loadUserSubmittedAds('pending')">Back</button></div>
+        <div class="card-body">
+          ${leads.length ? `<div style="overflow:auto"><table class="data-table"><thead><tr><th>Date</th><th>Cost</th><th>Lead data</th></tr></thead><tbody>${leads.map(l=>`<tr><td>${new Date(l.created_at).toLocaleString()}</td><td>₹${Number(l.cost||0).toFixed(2)}</td><td><pre style="white-space:pre-wrap">${JSON.stringify(l.lead_data||{}, null, 2)}</pre></td></tr>`).join('')}</tbody></table></div>` : '<div class="empty-state">No leads yet</div>'}
+        </div>
+      </div>`;
+  } catch (e) { grid.innerHTML = `<div style="color:var(--danger);grid-column:1/-1">${e.message}</div>`; }
+}
+
+async function loadAdDiagnostics(btn) {
+  if (btn) { document.querySelectorAll('#panel-ads .tab-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+  const grid = document.getElementById('adsGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:48px;color:var(--text-muted);grid-column:1/-1">Loading diagnostics...</div>';
+  try {
+    const d = await api('GET', '/ad-diagnostics');
+    const spend = await api('GET', '/ad-spend');
+    grid.innerHTML = `
+      <div class="card" style="grid-column:1/-1">
+        <div class="card-header"><div class="card-title">Ads Diagnostics</div></div>
+        <div class="card-body">
+          <div class="stats-grid" style="margin-bottom:16px">
+            <div class="stat-card"><div class="stat-value">₹${Number(d.payments.total_payments||0).toFixed(2)}</div><div class="stat-label">Total payments</div></div>
+            <div class="stat-card"><div class="stat-value">${Number(d.userAds.impressions||0).toLocaleString()}</div><div class="stat-label">User impressions</div></div>
+            <div class="stat-card"><div class="stat-value">${Number(d.userAds.clicks||0).toLocaleString()}</div><div class="stat-label">User clicks</div></div>
+            <div class="stat-card"><div class="stat-value">${Number(d.userAds.leads||0).toLocaleString()}</div><div class="stat-label">Leads</div></div>
+          </div>
+          <div style="overflow:auto"><table class="data-table"><thead><tr><th>Date</th><th>User</th><th>Ad</th><th>Event</th><th>Cost</th></tr></thead><tbody>${spend.map(e=>`<tr><td>${new Date(e.created_at).toLocaleString()}</td><td>${e.username||''}</td><td>${e.ad_title||''}</td><td>${e.event_type}</td><td>₹${Number(e.cost||0).toFixed(4)}</td></tr>`).join('')}</tbody></table></div>
+        </div>
+      </div>`;
+  } catch (e) { grid.innerHTML = `<div style="color:var(--danger);grid-column:1/-1">${e.message}</div>`; }
+}
+
+async function loadAdPayments(btn) {
+  if (btn) { document.querySelectorAll('#panel-ads .tab-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); }
+  const grid = document.getElementById('adsGrid');
+  grid.innerHTML = '<div style="text-align:center;padding:48px;color:var(--text-muted);grid-column:1/-1">Loading payments...</div>';
+  try {
+    const payments = await api('GET', '/ad-payments');
+    grid.innerHTML = `<div class="card" style="grid-column:1/-1"><div class="card-header"><div class="card-title">Ad Payment Statement</div></div><div class="card-body"><div style="overflow:auto"><table class="data-table"><thead><tr><th>Date</th><th>User</th><th>Amount</th><th>Status</th><th>Gateway</th><th>Payment ID</th></tr></thead><tbody>${payments.map(p=>`<tr><td>${new Date(p.created_at).toLocaleString()}</td><td>${p.username}<br><span style="color:var(--text-muted);font-size:12px">${p.email||''}</span></td><td>₹${Number(p.amount||0).toFixed(2)}</td><td>${p.status}</td><td>${p.gateway}</td><td>${p.gateway_payment_id||p.gateway_order_id||''}</td></tr>`).join('')}</tbody></table></div></div></div>`;
+  } catch (e) { grid.innerHTML = `<div style="color:var(--danger);grid-column:1/-1">${e.message}</div>`; }
+}
+
+async function openAdModal(adId = null) {
   currentAdId = adId;
   document.getElementById('adModalTitle').textContent = adId ? '✏️ Edit Campaign' : '📢 Create Campaign';
   document.getElementById('adSubmitBtn').textContent = adId ? '💾 Save Changes' : '📢 Create Campaign';
@@ -1467,8 +1535,43 @@ function openAdModal(adId = null) {
     const end = new Date(Date.now()+30*864e5).toISOString().split('T')[0];
     document.getElementById('adStartDate').value = today;
     document.getElementById('adEndDate').value = end;
+    ['placementStatus','placementChat','placementCalls','placementHome'].forEach((id,idx)=>setAdPlacement(id, idx===0));
+  } else {
+    openModal('adModal');
+    try {
+      const ad = await api('GET', `/ads/${adId}`);
+      const map = {
+        title:'adTitle', description:'adDesc', ad_type:'adType', media_type:'adMediaType',
+        media_url:'adMediaUrl', cta_text:'adCtaText', cta_url:'adCtaUrl',
+        budget:'adBudget', daily_budget:'adDailyBudget', cost_per_click:'adCpc', cost_per_impression:'adCpm',
+        start_date:'adStartDate', end_date:'adEndDate', target_gender:'adTargetGender',
+        target_age_min:'adAgeMin', target_age_max:'adAgeMax', target_location:'adTargetLocation',
+        target_interests:'adTargetInterests', advertiser_name:'adAdvertiserName',
+        advertiser_email:'adAdvertiserEmail', status:'adStatus', priority:'adPriority'
+      };
+      Object.entries(map).forEach(([k,id]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        let val = ad[k] ?? '';
+        if ((k === 'start_date' || k === 'end_date') && val) val = String(val).slice(0,10);
+        el.value = val;
+      });
+      setAdPlacement('placementStatus', !!ad.placement_status);
+      setAdPlacement('placementChat', !!ad.placement_chat);
+      setAdPlacement('placementCalls', !!ad.placement_calls);
+      setAdPlacement('placementHome', !!ad.placement_home);
+      updateAdPreview();
+    } catch (e) { showToast(e.message, 'error'); }
+    return;
   }
   openModal('adModal');
+}
+
+function setAdPlacement(id, checked) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.checked = !!checked;
+  el.closest('.placement-item')?.classList.toggle('checked', !!checked);
 }
 
 async function submitAd() {

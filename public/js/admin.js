@@ -548,17 +548,68 @@ router.get('/user-ads', requireAdmin, requirePermission('manage_ads'), async (re
 });
 
 router.put('/user-ads/:id/review', requireAdmin, requirePermission('manage_ads'), async (req, res) => {
-  const { status, rejectReason } = req.body;
-  if (!['approved','rejected'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const { status, rejectReason, verificationFields = [] } = req.body;
+  if (!['approved','rejected','hold','suspended','document_requested'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
   try {
     const [rows] = await pool.query('SELECT * FROM user_ads WHERE id=?', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Ad not found' });
     const ad = rows[0];
-    await pool.query('UPDATE user_ads SET status=?, reject_reason=? WHERE id=?', [status, rejectReason || null, req.params.id]);
-    emitToUser(ad.user_id, 'user-ad-reviewed', { adId: parseInt(req.params.id), status, rejectReason: rejectReason || null, title: ad.title });
+    const fields = ['status=?', 'reject_reason=?'];
+    const vals = [status, rejectReason || null];
+    if (status === 'document_requested') {
+      fields.push('verification_required=1', 'verification_fields=?', "verification_status='requested'");
+      vals.push(JSON.stringify(verificationFields || []));
+    }
+    if (status === 'approved') fields.push("verification_status='approved'");
+    vals.push(req.params.id);
+    await pool.query(`UPDATE user_ads SET ${fields.join(',')} WHERE id=?`, vals);
+    emitToUser(ad.user_id, 'user-ad-reviewed', { adId: parseInt(req.params.id), status, rejectReason: rejectReason || null, verificationFields, title: ad.title });
     if (status === 'approved' && io) io.emit('ad-updated', { type: 'user-ad-approved', adId: parseInt(req.params.id) });
     emitToAdmins('admin-ad-updated', { type: 'user-ad-reviewed', adId: parseInt(req.params.id), status });
     res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/ad-payments', requireAdmin, requirePermission('manage_ads'), async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT p.*, u.username, u.email, ua.title AS ad_title
+      FROM user_ad_payments p
+      JOIN users u ON u.id=p.user_id
+      LEFT JOIN user_ads ua ON ua.id=p.ad_id
+      ORDER BY p.created_at DESC LIMIT 500
+    `);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/ad-spend', requireAdmin, requirePermission('manage_ads'), async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT e.*, u.username, ua.title AS ad_title
+      FROM user_ad_events e
+      JOIN users u ON u.id=e.owner_user_id
+      JOIN user_ads ua ON ua.id=e.ad_id
+      ORDER BY e.created_at DESC LIMIT 700
+    `);
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/ad-diagnostics', requireAdmin, requirePermission('manage_ads'), async (req, res) => {
+  try {
+    const [[sys]] = await pool.query(`SELECT COUNT(*) total_ads, COALESCE(SUM(impressions),0) impressions, COALESCE(SUM(clicks),0) clicks, COALESCE(SUM(spend),0) spend FROM ads`);
+    const [[user]] = await pool.query(`SELECT COUNT(*) total_ads, COALESCE(SUM(impressions),0) impressions, COALESCE(SUM(clicks),0) clicks, COALESCE(SUM(leads),0) leads, COALESCE(SUM(spent),0) spend FROM user_ads`);
+    const [[pay]] = await pool.query(`SELECT COALESCE(SUM(amount),0) total_payments, COUNT(*) payment_count FROM user_ad_payments WHERE status='completed'`);
+    res.json({ systemAds: sys, userAds: user, payments: pay });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/user-ads/:id/leads', requireAdmin, requirePermission('manage_ads'), async (req, res) => {
+  try {
+    const [leads] = await pool.query('SELECT * FROM user_ad_leads WHERE ad_id=? ORDER BY created_at DESC', [req.params.id]);
+    leads.forEach(l => { try { l.lead_data = typeof l.lead_data === 'string' ? JSON.parse(l.lead_data) : l.lead_data; } catch {} });
+    res.json(leads);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 

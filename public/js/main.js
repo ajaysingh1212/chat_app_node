@@ -391,8 +391,19 @@ async function api(method,path,body){
   if(myToken)opts.headers['Authorization']='Bearer '+myToken;
   if(body)opts.body=JSON.stringify(body);
   const r=await fetch(path,opts);
-  const data=await r.json();
-  if(!r.ok)throw new Error(data.error||'Request failed');
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){
+    if(r.status===401 || /invalid token|unauthorized/i.test(data.error||'')){
+      localStorage.removeItem('chatapp_token');
+      localStorage.removeItem('chatapp_user');
+      sessionStorage.removeItem('unlockedChats');
+      myToken=null;myUser=null;
+      showToast('Session expired. Please login again.');
+      setTimeout(()=>location.reload(),900);
+      throw new Error('Session expired. Please login again.');
+    }
+    throw new Error(data.error||'Request failed');
+  }
   return data;
 }
 function showToast(msg){
@@ -638,46 +649,114 @@ function ensureUserAdsUi(){
     .inapp-ad-cta{border:1px solid #00bfa5;background:rgba(0,191,165,.12);color:#00bfa5;border-radius:7px;padding:7px 9px;font-size:11px;font-weight:700;cursor:pointer}
     .user-ads-entry{margin-top:8px;padding:10px 14px;border:1px solid #223045;border-radius:8px;background:#131d29;color:#d8e4f0;width:100%;text-align:left;cursor:pointer}
     .user-ads-modal{position:fixed;inset:0;z-index:980;background:rgba(0,0,0,.76);display:none;align-items:center;justify-content:center;padding:16px}
-    .user-ads-card{width:min(760px,96vw);max-height:92vh;overflow:auto;background:#111a24;border:1px solid #223045;border-radius:14px;padding:18px}
+    .user-ads-card{width:min(920px,96vw);max-height:92vh;overflow:auto;background:#111a24;border:1px solid #223045;border-radius:14px;padding:18px}
     .user-ads-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.user-ads-head h3{font-size:18px}
     .user-ads-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.user-ads-field label{display:block;font-size:11px;color:#6a8098;margin-bottom:4px}
     .user-ads-field input,.user-ads-field textarea,.user-ads-field select{width:100%;background:#172231;border:1px solid #2a3d56;color:#d8e4f0;border-radius:8px;padding:10px;font-family:var(--font)}
     .user-ads-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:14px}.user-ads-checks{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;color:#d8e4f0;font-size:12px}
+    .user-ads-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.user-ads-tabs button{border:1px solid #2a3d56;background:#172231;color:#d8e4f0;border-radius:8px;padding:8px 10px;cursor:pointer}.user-ads-tabs button.active{border-color:#00bfa5;color:#00bfa5}
+    .user-ads-list{display:grid;gap:8px;margin-top:12px}.user-ads-row{border:1px solid #223045;border-radius:8px;padding:10px;background:#131d29;color:#d8e4f0}.user-ads-row small{color:#6a8098}
+    .ads-manager-panel{padding:14px;color:#d8e4f0}.ads-manager-title{font-size:18px;font-weight:700;margin-bottom:4px}.ads-manager-sub{font-size:12px;color:#6a8098;margin-bottom:12px;line-height:1.5}.ads-manager-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.ads-manager-card{border:1px solid #223045;background:#131d29;border-radius:8px;padding:10px;margin-bottom:8px}.ads-manager-stat{display:grid;grid-template-columns:1fr 1fr;gap:8px}.ads-manager-stat div{border:1px solid #223045;border-radius:8px;padding:9px;background:#101a25}.ads-manager-stat strong{display:block;color:#00bfa5;font-size:16px}
+    .lead-form-overlay{position:fixed;inset:0;z-index:990;background:rgba(0,0,0,.72);display:none;align-items:center;justify-content:center;padding:16px}.lead-form-card{width:min(420px,94vw);background:#111a24;border:1px solid #223045;border-radius:12px;padding:16px}
     @media(max-width:700px){.user-ads-grid{grid-template-columns:1fr}.user-ads-actions{flex-direction:column}}
   `;
   document.head.appendChild(style);
-  const strip=document.createElement('div');
-  strip.id='homeAdsStrip';
-  strip.className='inapp-ad-strip';
-  strip.innerHTML='<img class="inapp-ad-media" id="homeAdMedia" alt=""><div class="inapp-ad-body"><div class="inapp-ad-title" id="homeAdTitle"></div><div class="inapp-ad-desc" id="homeAdDesc"></div></div><button class="inapp-ad-cta" id="homeAdCta">Open</button>';
+  const makeStrip=(id)=> {
+    const strip=document.createElement('div');
+    strip.id=id;
+    strip.className='inapp-ad-strip';
+    strip.innerHTML='<img class="inapp-ad-media" data-ad-media alt=""><div class="inapp-ad-body"><div class="inapp-ad-title" data-ad-title></div><div class="inapp-ad-desc" data-ad-desc></div></div><button class="inapp-ad-cta" data-ad-cta>Open</button>';
+    return strip;
+  };
+  const strip=makeStrip('homeAdsStrip');
   const side=document.querySelector('.sidebar')||document.querySelector('aside');
   const insertBefore=document.getElementById('chatList')||document.querySelector('.chat-list');
   if(side&&insertBefore)side.insertBefore(strip,insertBefore);else document.body.appendChild(strip);
+  const statusStrip=makeStrip('statusAdsStrip');
+  document.getElementById('panelStatus')?.insertBefore(statusStrip, document.getElementById('statusContactsList'));
+  const callsStrip=makeStrip('callsAdsStrip');
+  document.getElementById('panelCalls')?.insertBefore(callsStrip, document.getElementById('callHistoryList'));
+  ensureAdsManagerEntry();
   const adBtn=document.createElement('button');
-  adBtn.className='user-ads-entry';
-  adBtn.textContent='Create / manage ads';
+  adBtn.className='settings-item';
+  adBtn.innerHTML='<div class="settings-icon si-teal">Ad</div><div class="settings-item-text"><span>Ads</span><small>Create, pay, track leads and spend</small></div>';
   adBtn.onclick=()=>openUserAdsPanel();
   document.getElementById('panelSettings')?.querySelector('.settings-list')?.appendChild(adBtn);
 }
 
+function ensureAdsManagerEntry(){
+  if(!document.getElementById('panelAds')){
+    const panel=document.createElement('div');
+    panel.className='sidebar-panel';
+    panel.id='panelAds';
+    panel.innerHTML=`<div class="ads-manager-panel">
+      <div class="ads-manager-title">Ads Manager</div>
+      <div class="ads-manager-sub">Create ads, add payment, check approval status, leads, clicks, impressions and spend statement.</div>
+      <div class="ads-manager-actions">
+        <button class="inapp-ad-cta" id="adsOpenManagerBtn">Create / manage ads</button>
+        <button class="inapp-ad-cta" id="adsOpenPaymentsBtn">Payments</button>
+      </div>
+      <div id="adsQuickSummary" class="ads-manager-card">Loading ads summary...</div>
+    </div>`;
+    document.getElementById('sidebarEl')?.appendChild(panel);
+  }
+  document.getElementById('adsOpenManagerBtn')?.addEventListener('click',()=>openUserAdsPanel());
+  document.getElementById('adsOpenPaymentsBtn')?.addEventListener('click',()=>{openUserAdsPanel();setTimeout(()=>document.querySelector('[data-uads-tab="payments"]')?.click(),50);});
+  if(!document.querySelector('[data-panel="ads"]')){
+    const btn=document.createElement('button');
+    btn.className='dtab';
+    btn.dataset.panel='ads';
+    btn.title='Ads';
+    btn.innerHTML='<span style="font-size:18px;line-height:1">Ad</span><span>Ads</span>';
+    btn.addEventListener('click',()=>switchPanel('ads'));
+    document.getElementById('desktopTabBar')?.appendChild(btn);
+  }
+  if(!document.querySelector('[data-nav="ads"]')){
+    const btn=document.createElement('button');
+    btn.className='mnav-btn';
+    btn.dataset.nav='ads';
+    btn.innerHTML='<span style="font-size:22px;line-height:1">Ad</span><span>Ads</span>';
+    btn.addEventListener('click',()=>{switchPanel('ads');showSidebar();});
+    document.getElementById('mobileBottomNav')?.appendChild(btn);
+  }
+}
+
+async function renderAdsQuickPanel(){
+  const el=document.getElementById('adsQuickSummary');
+  if(!el)return;
+  try{
+    const d=await api('GET','/api/ads/diagnostics');
+    const b=d.balance||{};
+    const t=d.totals||{};
+    el.innerHTML=`<div class="ads-manager-stat">
+      <div><strong>₹${Number(b.balance||0).toFixed(2)}</strong><small>Wallet balance</small></div>
+      <div><strong>₹${Number(t.spent||0).toFixed(2)}</strong><small>Total spent</small></div>
+      <div><strong>${Number(t.impressions||0).toLocaleString()}</strong><small>Impressions</small></div>
+      <div><strong>${Number(t.clicks||0).toLocaleString()}</strong><small>Clicks</small></div>
+    </div>`;
+  }catch(e){
+    el.innerHTML=`<small>${e.message}</small>`;
+  }
+}
+
 async function loadInAppAds(){
   try{
-    const placement=activeChat?.type?'chat':'home';
+    const activePanel=document.querySelector('.sidebar-panel.active')?.id || 'panelChats';
+    const placement=activePanel==='panelStatus'?'status':activePanel==='panelCalls'?'calls':activePanel==='panelChats'?'chat':'home';
+    const stripId=placement==='status'?'statusAdsStrip':placement==='calls'?'callsAdsStrip':'homeAdsStrip';
+    document.querySelectorAll('.inapp-ad-strip').forEach(el=>el.classList.remove('show'));
     const ads=await api('GET',`/api/all-ads?placement=${placement}`);
     const ad=ads?.[0];
-    const strip=document.getElementById('homeAdsStrip');
+    const strip=document.getElementById(stripId);
     if(!strip||!ad){if(strip)strip.classList.remove('show');return;}
-    document.getElementById('homeAdTitle').textContent=ad.title||'Sponsored';
-    document.getElementById('homeAdDesc').textContent=ad.description||ad.advertiser_name||'';
-    const media=document.getElementById('homeAdMedia');
+    strip.querySelector('[data-ad-title]').textContent=ad.title||'Sponsored';
+    strip.querySelector('[data-ad-desc]').textContent=ad.description||ad.advertiser_name||'';
+    const media=strip.querySelector('[data-ad-media]');
     media.src=ad.media_url||'';
     media.style.display=ad.media_url?'block':'none';
-    const cta=document.getElementById('homeAdCta');
+    const cta=strip.querySelector('[data-ad-cta]');
     cta.textContent=ad.cta_text||'Open';
-    cta.onclick=()=>{
-      trackAdEvent(ad,'click',placement);
-      if(ad.cta_url)window.open(ad.cta_url,'_blank');
-    };
+    cta.onclick=()=>handleAdAction(ad,placement);
     strip.classList.add('show');
     trackAdEvent(ad,'impression',placement);
   }catch(e){}
@@ -688,10 +767,61 @@ function trackAdEvent(ad,eventType,placement){
   fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eventType,placement,userId:myUser?.id||null})}).catch(()=>{});
 }
 
+function handleAdAction(ad,placement){
+  const action=ad.action_type||'website';
+  if(action==='lead')return openLeadForm(ad,placement);
+  if(action==='call'&&ad.phone_number){
+    trackAdEvent(ad,'call',placement);
+    location.href='tel:'+ad.phone_number;
+    return;
+  }
+  if(action==='whatsapp'&&ad.whatsapp_number){
+    trackAdEvent(ad,'whatsapp',placement);
+    window.open('https://wa.me/'+String(ad.whatsapp_number).replace(/\D/g,''),'_blank');
+    return;
+  }
+  trackAdEvent(ad,'website_visit',placement);
+  if(ad.cta_url)window.open(ad.cta_url,'_blank');
+}
+
+function openLeadForm(ad,placement){
+  let modal=document.getElementById('leadFormModal');
+  if(!modal){
+    modal=document.createElement('div');
+    modal.id='leadFormModal';
+    modal.className='lead-form-overlay';
+    document.body.appendChild(modal);
+  }
+  let fields=[];
+  try{fields=typeof ad.lead_fields==='string'?JSON.parse(ad.lead_fields):(ad.lead_fields||[]);}catch{fields=[];}
+  if(!fields.length)fields=['Name','Phone'];
+  modal.innerHTML=`<div class="lead-form-card">
+    <div class="user-ads-head"><h3>${ad.title||'Lead form'}</h3><button class="rp-close" id="leadCloseBtn">x</button></div>
+    <div class="user-ads-grid" style="grid-template-columns:1fr">${fields.map((f,i)=>`<div class="user-ads-field"><label>${f}</label><input data-lead-field="${f}" id="leadField${i}"></div>`).join('')}</div>
+    <div class="user-ads-actions"><button class="fpc-cancel" id="leadCancelBtn">Cancel</button><button class="media-preview-send" id="leadSubmitBtn">Submit</button></div>
+  </div>`;
+  modal.style.display='flex';
+  modal.onclick=e=>{if(e.target===modal)modal.style.display='none';};
+  document.getElementById('leadCloseBtn').onclick=()=>modal.style.display='none';
+  document.getElementById('leadCancelBtn').onclick=()=>modal.style.display='none';
+  document.getElementById('leadSubmitBtn').onclick=async()=>{
+    const leadData={};
+    modal.querySelectorAll('[data-lead-field]').forEach(inp=>leadData[inp.dataset.leadField]=inp.value.trim());
+    await fetch(`/api/user-ads/${ad.id}/event`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({eventType:'lead',placement,userId:myUser?.id||null,leadData})}).catch(()=>{});
+    showToast('Lead submitted');
+    modal.style.display='none';
+  };
+}
+
 function openUserAdsPanel(){
+  if(!myToken){
+    showToast('Please login first.');
+    return;
+  }
   ensureUserAdsModal();
   document.getElementById('userAdsModal').style.display='flex';
   refreshUserAdsBalance();
+  loadUserAdsCampaigns();
 }
 
 function ensureUserAdsModal(){
@@ -712,16 +842,29 @@ function ensureUserAdsModal(){
         <input id="userAdsTopupAmount" type="number" min="1" placeholder="Amount" style="width:120px;background:#172231;border:1px solid #2a3d56;color:#d8e4f0;border-radius:8px;padding:9px">
         <button class="inapp-ad-cta" id="userAdsTopupBtn">Add balance</button>
       </div>
+      <div class="user-ads-tabs">
+        <button class="active" data-uads-tab="create">Create</button>
+        <button data-uads-tab="campaigns">Campaigns</button>
+        <button data-uads-tab="payments">Payments</button>
+        <button data-uads-tab="spend">Spend</button>
+      </div>
+      <div id="userAdsStatement" class="user-ads-list"></div>
+      <div id="userAdsCreatePane">
       <div class="user-ads-grid">
         <div class="user-ads-field"><label>Title</label><input id="uAdTitle" maxlength="120"></div>
         <div class="user-ads-field"><label>Advertiser name</label><input id="uAdAdvertiser" maxlength="120"></div>
         <div class="user-ads-field" style="grid-column:1/-1"><label>Description</label><textarea id="uAdDesc" rows="2"></textarea></div>
         <div class="user-ads-field"><label>Media</label><input id="uAdMedia" type="file" accept="image/*,video/*"></div>
-        <div class="user-ads-field"><label>CTA URL</label><input id="uAdCtaUrl" type="url" placeholder="https://..."></div>
+        <div class="user-ads-field"><label>Action</label><select id="uAdAction"><option value="website">Website visit</option><option value="call">Call</option><option value="whatsapp">WhatsApp</option><option value="lead">Lead form</option></select></div>
+        <div class="user-ads-field"><label>Website URL</label><input id="uAdCtaUrl" type="url" placeholder="https://..."></div>
+        <div class="user-ads-field"><label>Call number</label><input id="uAdPhone" placeholder="+91..."></div>
+        <div class="user-ads-field"><label>WhatsApp number</label><input id="uAdWhatsapp" placeholder="+91..."></div>
+        <div class="user-ads-field" style="grid-column:1/-1"><label>Lead fields</label><input id="uAdLeadFields" placeholder="Name, Phone, City"></div>
         <div class="user-ads-field"><label>Budget</label><input id="uAdBudget" type="number" min="0" value="100"></div>
         <div class="user-ads-field"><label>Daily budget</label><input id="uAdDailyBudget" type="number" min="0" value="50"></div>
         <div class="user-ads-field"><label>Cost per click</label><input id="uAdCpc" type="number" min="0" step="0.01" value="1"></div>
         <div class="user-ads-field"><label>Cost per impression</label><input id="uAdCpm" type="number" min="0" step="0.01" value="0.10"></div>
+        <div class="user-ads-field"><label>Cost per lead</label><input id="uAdCpl" type="number" min="0" step="0.01" value="5"></div>
         <div class="user-ads-field"><label>Start date</label><input id="uAdStart" type="date" value="${today}"></div>
         <div class="user-ads-field"><label>End date</label><input id="uAdEnd" type="date" value="${end}"></div>
         <div class="user-ads-field"><label>Gender</label><select id="uAdGender"><option value="all">All</option><option value="male">Male</option><option value="female">Female</option></select></div>
@@ -730,12 +873,14 @@ function ensureUserAdsModal(){
       <div class="user-ads-checks">
         <label><input id="uAdPlaceStatus" type="checkbox" checked> Status</label>
         <label><input id="uAdPlaceChat" type="checkbox"> Chat</label>
+        <label><input id="uAdPlaceCalls" type="checkbox"> Calls</label>
         <label><input id="uAdPlaceHome" type="checkbox" checked> Home</label>
       </div>
       <div id="uAdPreview" style="margin-top:12px;font-size:12px;color:#6a8098"></div>
       <div class="user-ads-actions">
         <button class="fpc-cancel" id="uAdCancelBtn">Cancel</button>
         <button class="media-preview-send" id="uAdSubmitBtn">Submit for approval</button>
+      </div>
       </div>
     </div>`;
   document.body.appendChild(modal);
@@ -744,10 +889,22 @@ function ensureUserAdsModal(){
   modal.addEventListener('click',e=>{if(e.target===modal)modal.style.display='none';});
   document.getElementById('userAdsTopupBtn').onclick=topupUserAdsBalance;
   document.getElementById('uAdSubmitBtn').onclick=submitUserAdCampaign;
+  modal.querySelectorAll('[data-uads-tab]').forEach(btn=>btn.onclick=()=>switchUserAdsTab(btn.dataset.uadsTab,btn));
   document.getElementById('uAdMedia').onchange=e=>{
     const f=e.target.files?.[0];
     document.getElementById('uAdPreview').textContent=f?`Selected: ${f.name}`:'';
   };
+}
+
+function switchUserAdsTab(tab,btn){
+  document.querySelectorAll('[data-uads-tab]').forEach(b=>b.classList.toggle('active',b===btn));
+  const create=document.getElementById('userAdsCreatePane');
+  const stmt=document.getElementById('userAdsStatement');
+  create.style.display=tab==='create'?'block':'none';
+  stmt.innerHTML='';
+  if(tab==='campaigns')loadUserAdsCampaigns();
+  if(tab==='payments')loadUserAdsPayments();
+  if(tab==='spend')loadUserAdsSpend();
 }
 
 async function refreshUserAdsBalance(){
@@ -755,6 +912,66 @@ async function refreshUserAdsBalance(){
     const b=await api('GET','/api/ads/balance');
     document.getElementById('userAdsBalance').textContent='₹'+Number(b.balance||0).toFixed(2);
   }catch(e){}
+}
+
+async function loadUserAdsCampaigns(){
+  const el=document.getElementById('userAdsStatement');if(!el)return;
+  try{
+    const ads=await api('GET','/api/user-ads');
+    el.innerHTML=ads.map(ad=>`<div class="user-ads-row">
+      <strong>${ad.title}</strong> <small>${ad.status}</small>
+      <div><small>Budget ₹${Number(ad.budget||0).toFixed(2)} | Spent ₹${Number(ad.spent||0).toFixed(2)} | Impr ${Number(ad.impressions||0).toLocaleString()} | Click ${Number(ad.clicks||0).toLocaleString()} | Leads ${Number(ad.leads||0).toLocaleString()}</small></div>
+      <div><small>CPC ₹${Number(ad.cost_per_click||0).toFixed(2)} | CPI ₹${Number(ad.cost_per_impression||0).toFixed(4)} | CPL ₹${Number(ad.cost_per_lead||0).toFixed(2)}</small></div>
+      ${ad.reject_reason?`<div><small>${ad.reject_reason}</small></div>`:''}
+      ${ad.status==='document_requested'?`<div class="user-ads-actions" style="justify-content:flex-start"><button class="inapp-ad-cta" onclick="submitAdDocuments(${ad.id})">Submit documents</button></div>`:''}
+      ${Number(ad.leads||0)>0?`<div class="user-ads-actions" style="justify-content:flex-start"><button class="inapp-ad-cta" onclick="downloadUserAdLeads(${ad.id})">Download leads</button></div>`:''}
+    </div>`).join('')||'<div class="user-ads-row"><small>No campaigns yet</small></div>';
+  }catch(e){el.innerHTML=`<div class="user-ads-row"><small>${e.message}</small></div>`;}
+}
+
+async function loadUserAdsPayments(){
+  const el=document.getElementById('userAdsStatement');if(!el)return;
+  try{
+    const rows=await api('GET','/api/ads/payments');
+    el.innerHTML=rows.map(p=>`<div class="user-ads-row"><strong>₹${Number(p.amount||0).toFixed(2)}</strong> <small>${p.status}</small><div><small>${new Date(p.created_at).toLocaleString()} | ${p.gateway} | ${p.gateway_payment_id||p.gateway_order_id||''}</small></div></div>`).join('')||'<div class="user-ads-row"><small>No payments yet</small></div>';
+  }catch(e){el.innerHTML=`<div class="user-ads-row"><small>${e.message}</small></div>`;}
+}
+
+async function loadUserAdsSpend(){
+  const el=document.getElementById('userAdsStatement');if(!el)return;
+  try{
+    const rows=await api('GET','/api/ads/spend');
+    el.innerHTML=rows.map(s=>`<div class="user-ads-row"><strong>${s.event_type}</strong> <small>₹${Number(s.cost||0).toFixed(4)}</small><div><small>${new Date(s.created_at).toLocaleString()} | ${s.ad_title||''} | ${s.placement||''}</small></div></div>`).join('')||'<div class="user-ads-row"><small>No spend yet</small></div>';
+  }catch(e){el.innerHTML=`<div class="user-ads-row"><small>${e.message}</small></div>`;}
+}
+
+async function submitAdDocuments(adId){
+  const docs={};
+  const aadhaar=prompt('Aadhaar card/details');
+  if(aadhaar!==null)docs.aadhaar=aadhaar;
+  const pan=prompt('PAN card/details');
+  if(pan!==null)docs.pan=pan;
+  const extra=prompt('Other details requested by admin');
+  if(extra!==null)docs.extra=extra;
+  try{
+    await api('PUT',`/api/user-ads/${adId}`,{verificationDocuments:docs});
+    showToast('Documents submitted');
+    loadUserAdsCampaigns();
+  }catch(e){showToast(e.message);}
+}
+
+async function downloadUserAdLeads(adId){
+  try{
+    const leads=await api('GET',`/api/user-ads/${adId}/leads`);
+    const rows=[['Date','Cost','Data']];
+    leads.forEach(l=>rows.push([new Date(l.created_at).toLocaleString(),Number(l.cost||0).toFixed(2),JSON.stringify(l.lead_data||{})]));
+    const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+    a.download=`ad-${adId}-leads.csv`;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  }catch(e){showToast(e.message);}
 }
 
 async function loadRazorpayScript(){
@@ -801,13 +1018,19 @@ async function submitUserAdCampaign(){
       title:document.getElementById('uAdTitle').value.trim(),
       description:document.getElementById('uAdDesc').value.trim(),
       mediaUrl,mediaType,ctaText:'Learn More',ctaUrl:document.getElementById('uAdCtaUrl').value.trim(),
+      actionType:document.getElementById('uAdAction').value,
+      phoneNumber:document.getElementById('uAdPhone').value.trim(),
+      whatsappNumber:document.getElementById('uAdWhatsapp').value.trim(),
+      leadFields:document.getElementById('uAdLeadFields').value.split(',').map(x=>x.trim()).filter(Boolean),
       placementStatus:document.getElementById('uAdPlaceStatus').checked?1:0,
       placementChat:document.getElementById('uAdPlaceChat').checked?1:0,
+      placementCalls:document.getElementById('uAdPlaceCalls').checked?1:0,
       placementHome:document.getElementById('uAdPlaceHome').checked?1:0,
       budget:Number(document.getElementById('uAdBudget').value||0),
       dailyBudget:Number(document.getElementById('uAdDailyBudget').value||0),
       costPerClick:Number(document.getElementById('uAdCpc').value||0),
       costPerImpression:Number(document.getElementById('uAdCpm').value||0),
+      costPerLead:Number(document.getElementById('uAdCpl').value||0),
       startDate:document.getElementById('uAdStart').value,
       endDate:document.getElementById('uAdEnd').value,
       targetGender:document.getElementById('uAdGender').value,
@@ -1181,13 +1404,15 @@ function expandMinimizedCall(){
    NAVIGATION
 ════════════════════════════════════════════════════════════════════════════ */
 function switchPanel(panel){
-  ['chats','status','calls','settings'].forEach(p=>{
+  ['chats','status','calls','settings','ads'].forEach(p=>{
     const el=$(`panel${p.charAt(0).toUpperCase()+p.slice(1)}`);if(el)el.classList.toggle('active',p===panel);
   });
   document.querySelectorAll('.dtab').forEach(b=>b.classList.toggle('active',b.dataset.panel===panel));
   document.querySelectorAll('.mnav-btn').forEach(b=>b.classList.toggle('active',b.dataset.nav===panel));
   const sw=$('searchBarWrap');if(sw)sw.style.display=panel==='chats'?'flex':'none';
   if(panel==='status')loadStatuses();
+  if(panel==='ads')renderAdsQuickPanel();
+  loadInAppAds();
 }
 desktopTabBar?.querySelectorAll('.dtab').forEach(btn=>btn.addEventListener('click',()=>switchPanel(btn.dataset.panel)));
 mobileBottomNav?.querySelectorAll('.mnav-btn').forEach(btn=>{btn.addEventListener('click',()=>{switchPanel(btn.dataset.nav);showSidebar();});});

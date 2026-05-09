@@ -30,14 +30,20 @@ export async function initBanAdsTables(poolInstance) {
     media_type ENUM('image','video','gif') DEFAULT 'image',
     cta_text VARCHAR(100) DEFAULT 'Learn More',
     cta_url VARCHAR(500) DEFAULT NULL,
+    action_type ENUM('website','call','whatsapp','lead') DEFAULT 'website',
+    phone_number VARCHAR(40) DEFAULT NULL,
+    whatsapp_number VARCHAR(40) DEFAULT NULL,
+    lead_fields JSON DEFAULT NULL,
     placement_status TINYINT(1) DEFAULT 1,
     placement_chat TINYINT(1) DEFAULT 0,
+    placement_calls TINYINT(1) DEFAULT 0,
     placement_home TINYINT(1) DEFAULT 0,
     budget DECIMAL(10,2) DEFAULT 0.00,
     spent DECIMAL(10,2) DEFAULT 0.00,
     daily_budget DECIMAL(10,2) DEFAULT 0.00,
     cost_per_click DECIMAL(10,4) DEFAULT 0.0000,
     cost_per_impression DECIMAL(10,4) DEFAULT 0.0000,
+    cost_per_lead DECIMAL(10,4) DEFAULT 0.0000,
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     target_gender ENUM('all','male','female') DEFAULT 'all',
@@ -47,13 +53,31 @@ export async function initBanAdsTables(poolInstance) {
     advertiser_name VARCHAR(200) DEFAULT NULL,
     impressions BIGINT DEFAULT 0,
     clicks BIGINT DEFAULT 0,
-    status ENUM('draft','pending','approved','paused','ended','rejected') DEFAULT 'pending',
+    leads BIGINT DEFAULT 0,
+    verification_required TINYINT(1) DEFAULT 0,
+    verification_fields JSON DEFAULT NULL,
+    verification_documents JSON DEFAULT NULL,
+    verification_status ENUM('not_required','requested','submitted','approved','rejected') DEFAULT 'not_required',
+    status ENUM('draft','pending','approved','paused','hold','suspended','document_requested','ended','rejected') DEFAULT 'pending',
     reject_reason TEXT DEFAULT NULL,
     priority INT DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS action_type ENUM('website','call','whatsapp','lead') DEFAULT 'website'`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS phone_number VARCHAR(40) DEFAULT NULL`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR(40) DEFAULT NULL`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS lead_fields JSON DEFAULT NULL`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS placement_calls TINYINT(1) DEFAULT 0`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS cost_per_lead DECIMAL(10,4) DEFAULT 0.0000`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS leads BIGINT DEFAULT 0`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS verification_required TINYINT(1) DEFAULT 0`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS verification_fields JSON DEFAULT NULL`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS verification_documents JSON DEFAULT NULL`);
+  await q(`ALTER TABLE user_ads ADD COLUMN IF NOT EXISTS verification_status ENUM('not_required','requested','submitted','approved','rejected') DEFAULT 'not_required'`);
+  await q(`ALTER TABLE user_ads MODIFY COLUMN status ENUM('draft','pending','approved','paused','hold','suspended','document_requested','ended','rejected') DEFAULT 'pending'`);
 
   await q(`CREATE TABLE IF NOT EXISTS user_ad_payments (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -78,6 +102,34 @@ export async function initBanAdsTables(poolInstance) {
     total_spent DECIMAL(10,2) DEFAULT 0.00,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await q(`CREATE TABLE IF NOT EXISTS user_ad_events (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ad_id INT NOT NULL,
+    owner_user_id INT NOT NULL,
+    viewer_user_id INT NULL,
+    event_type ENUM('impression','click','lead','call','whatsapp','website_visit') DEFAULT 'impression',
+    placement VARCHAR(50) DEFAULT NULL,
+    cost DECIMAL(10,4) DEFAULT 0.0000,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ad_id) REFERENCES user_ads(id) ON DELETE CASCADE,
+    INDEX idx_user_ad_events_ad (ad_id),
+    INDEX idx_user_ad_events_owner (owner_user_id),
+    INDEX idx_user_ad_events_date (created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await q(`CREATE TABLE IF NOT EXISTS user_ad_leads (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    ad_id INT NOT NULL,
+    owner_user_id INT NOT NULL,
+    viewer_user_id INT NULL,
+    lead_data JSON NOT NULL,
+    cost DECIMAL(10,4) DEFAULT 0.0000,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ad_id) REFERENCES user_ads(id) ON DELETE CASCADE,
+    INDEX idx_user_ad_leads_ad (ad_id),
+    INDEX idx_user_ad_leads_owner (owner_user_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
   await q(`CREATE TABLE IF NOT EXISTS payment_gateways (
@@ -273,7 +325,17 @@ router.post('/payment/verify', requireAuth, async (req, res) => {
       [req.user.id, amount, amount]
     );
 
+    await pool.query(
+      `UPDATE user_ads
+       SET status='approved'
+       WHERE user_id=? AND status IN ('ended','paused')
+         AND start_date <= CURDATE() AND end_date >= CURDATE()
+         AND (budget = 0 OR spent < budget)`,
+      [req.user.id]
+    );
+
     const [bal] = await pool.query('SELECT balance FROM ad_balance WHERE user_id=?', [req.user.id]);
+    if (io) io.emit('ad-updated', { type: 'wallet-funded', userId: req.user.id });
     
     res.json({ ok: true, newBalance: bal[0]?.balance || 0 });
   } catch(e) {
@@ -287,6 +349,50 @@ router.get('/ads/balance', requireAuth, async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM ad_balance WHERE user_id=?', [req.user.id]);
     res.json(rows[0] || { balance: 0, total_added: 0, total_spent: 0 });
   } catch(e) { res.json({ balance: 0 }); }
+});
+
+router.get('/ads/payments', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT p.*, ua.title AS ad_title
+       FROM user_ad_payments p
+       LEFT JOIN user_ads ua ON ua.id=p.ad_id
+       WHERE p.user_id=? ORDER BY p.created_at DESC LIMIT 200`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/ads/spend', requireAuth, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT e.*, ua.title AS ad_title
+       FROM user_ad_events e JOIN user_ads ua ON ua.id=e.ad_id
+       WHERE e.owner_user_id=? ORDER BY e.created_at DESC LIMIT 500`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/ads/diagnostics', requireAuth, async (req, res) => {
+  try {
+    const [[balance]] = await pool.query('SELECT * FROM ad_balance WHERE user_id=?', [req.user.id]);
+    const [ads] = await pool.query(
+      `SELECT id,title,status,budget,spent,impressions,clicks,leads,cost_per_click,cost_per_impression,cost_per_lead,
+              action_type,verification_status,reject_reason
+       FROM user_ads WHERE user_id=? ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+    const [[totals]] = await pool.query(
+      `SELECT COALESCE(SUM(impressions),0) impressions, COALESCE(SUM(clicks),0) clicks,
+              COALESCE(SUM(leads),0) leads, COALESCE(SUM(spent),0) spent
+       FROM user_ads WHERE user_id=?`,
+      [req.user.id]
+    );
+    res.json({ balance: balance || { balance: 0, total_added: 0, total_spent: 0 }, totals, ads });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -309,9 +415,10 @@ router.post('/user-ads', requireAuth, async (req, res) => {
   const {
     title, description, adType = 'banner', mediaUrl, mediaType = 'image',
     ctaText = 'Learn More', ctaUrl, placementStatus = 1, placementChat = 0,
-    placementHome = 0, budget = 0, dailyBudget = 0, costPerClick = 0,
-    costPerImpression = 0, startDate, endDate, targetGender = 'all',
-    targetAgeMin = 13, targetAgeMax = 65, targetLocation, advertiserName
+    placementCalls = 0, placementHome = 0, budget = 0, dailyBudget = 0, costPerClick = 0,
+    costPerImpression = 0, costPerLead = 0, startDate, endDate, targetGender = 'all',
+    targetAgeMin = 13, targetAgeMax = 65, targetLocation, advertiserName,
+    actionType = 'website', phoneNumber, whatsappNumber, leadFields = []
   } = req.body;
 
   if (!title || !startDate || !endDate) {
@@ -331,14 +438,16 @@ router.post('/user-ads', requireAuth, async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO user_ads (user_id, title, description, ad_type, media_url, media_type,
-        cta_text, cta_url, placement_status, placement_chat, placement_home,
-        budget, daily_budget, cost_per_click, cost_per_impression,
+        cta_text, cta_url, action_type, phone_number, whatsapp_number, lead_fields,
+        placement_status, placement_chat, placement_calls, placement_home,
+        budget, daily_budget, cost_per_click, cost_per_impression, cost_per_lead,
         start_date, end_date, target_gender, target_age_min, target_age_max,
         target_location, advertiser_name, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending')`,
       [req.user.id, title, description, adType, mediaUrl, mediaType,
-       ctaText, ctaUrl, placementStatus, placementChat, placementHome,
-       budget, dailyBudget, costPerClick, costPerImpression,
+       ctaText, ctaUrl, actionType, phoneNumber || null, whatsappNumber || null, JSON.stringify(leadFields || []),
+       placementStatus, placementChat, placementCalls, placementHome,
+       budget, dailyBudget, costPerClick, costPerImpression, costPerLead,
        startDate, endDate, targetGender, targetAgeMin, targetAgeMax,
        targetLocation, advertiserName]
     );
@@ -354,13 +463,18 @@ router.post('/user-ads', requireAuth, async (req, res) => {
 router.put('/user-ads/:id', requireAuth, async (req, res) => {
   const [ad] = await pool.query('SELECT * FROM user_ads WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
   if (!ad.length) return res.status(404).json({ error: 'Ad not found' });
-  if (!['draft', 'rejected'].includes(ad[0].status)) {
-    return res.status(400).json({ error: 'Can only edit draft or rejected ads' });
+  if (!['draft', 'rejected', 'document_requested'].includes(ad[0].status)) {
+    return res.status(400).json({ error: 'Can only edit draft, rejected, or document requested ads' });
   }
 
   const fields = [], vals = [];
-  const allowed = ['title','description','media_url','cta_text','cta_url','target_location'];
+  const allowed = ['title','description','media_url','cta_text','cta_url','target_location','phone_number','whatsapp_number','action_type'];
   allowed.forEach(k => { if (req.body[k] !== undefined) { fields.push(`${k}=?`); vals.push(req.body[k]); } });
+  if (req.body.leadFields !== undefined) { fields.push('lead_fields=?'); vals.push(JSON.stringify(req.body.leadFields || [])); }
+  if (req.body.verificationDocuments !== undefined) {
+    fields.push('verification_documents=?', "verification_status='submitted'");
+    vals.push(JSON.stringify(req.body.verificationDocuments || {}));
+  }
   if (fields.length) {
     fields.push('status=?'); vals.push('pending'); vals.push(req.params.id);
     await pool.query(`UPDATE user_ads SET ${fields.join(',')} WHERE id=?`, vals);
@@ -379,17 +493,25 @@ router.delete('/user-ads/:id', requireAuth, async (req, res) => {
 
 // ── Admin: approve/reject user ad ─────────────────────────────────────────
 router.put('/admin/user-ads/:id/review', requireAuth, async (req, res) => {
-  const { status, rejectReason } = req.body;
-  if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
+  const { status, rejectReason, verificationFields = [] } = req.body;
+  if (!['approved', 'rejected', 'hold', 'suspended', 'document_requested'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
 
   try {
     const [ad] = await pool.query('SELECT * FROM user_ads WHERE id=?', [req.params.id]);
     if (!ad.length) return res.status(404).json({ error: 'Ad not found' });
 
-    await pool.query(
-      'UPDATE user_ads SET status=?, reject_reason=? WHERE id=?',
-      [status, rejectReason || null, req.params.id]
-    );
+    const verificationStatus = status === 'document_requested' ? 'requested' : (status === 'approved' ? 'approved' : undefined);
+    const fields = ['status=?', 'reject_reason=?'];
+    const vals = [status, rejectReason || null];
+    if (status === 'document_requested') {
+      fields.push('verification_required=1', 'verification_fields=?', 'verification_status=?');
+      vals.push(JSON.stringify(verificationFields || []), verificationStatus);
+    } else if (verificationStatus) {
+      fields.push('verification_status=?');
+      vals.push(verificationStatus);
+    }
+    vals.push(req.params.id);
+    await pool.query(`UPDATE user_ads SET ${fields.join(',')} WHERE id=?`, vals);
 
     // Notify user via socket
     if (io) {
@@ -397,6 +519,7 @@ router.put('/admin/user-ads/:id/review', requireAuth, async (req, res) => {
         adId: parseInt(req.params.id),
         status,
         rejectReason: rejectReason || null,
+        verificationFields,
         title: ad[0].title
       });
     }
@@ -428,7 +551,7 @@ router.get('/admin/user-ads', requireAuth, async (req, res) => {
 // ── Public: Get all active ads (system + user) ────────────────────────────
 router.get('/all-ads', async (req, res) => {
   const { placement = 'status' } = req.query;
-  const validPlacements = ['status', 'chat', 'home'];
+  const validPlacements = ['status', 'chat', 'calls', 'home'];
   if (!validPlacements.includes(placement)) return res.json([]);
   const col = `placement_${placement}`;
 
@@ -446,53 +569,122 @@ router.get('/all-ads', async (req, res) => {
     // User ads
     const [userAds] = await pool.query(
       `SELECT ua.id, ua.title, ua.description, ua.ad_type, ua.media_url, ua.media_type,
-              ua.cta_text, ua.cta_url, '#1a2433' as bg_color, '#ffffff' as text_color,
+              ua.cta_text, ua.cta_url, ua.action_type, ua.phone_number, ua.whatsapp_number,
+              ua.lead_fields, ua.cost_per_click, ua.cost_per_impression, ua.cost_per_lead,
+              '#1a2433' as bg_color, '#ffffff' as text_color,
               '#00bfa5' as border_color, ua.advertiser_name, NULL as advertiser_logo,
               ua.priority, 'user' as source
        FROM user_ads ua WHERE ua.status='approved' AND ua.${col}=1
          AND ua.start_date <= CURDATE() AND ua.end_date >= CURDATE()
-         AND ua.spent < ua.budget
+         AND (ua.budget = 0 OR ua.spent < ua.budget)
        ORDER BY RAND() LIMIT 1`
     );
 
-    res.json([...sysAds, ...userAds]);
+    let combined = [...sysAds, ...userAds];
+    if (!combined.length) {
+      const [fallbackSys] = await pool.query(
+        `SELECT id, title, description, ad_type, media_url, media_type, cta_text, cta_url,
+                bg_color, text_color, border_color, advertiser_name, advertiser_logo, priority,
+                'system' as source
+         FROM ads WHERE status='active'
+           AND (placement_status=1 OR placement_chat=1 OR placement_calls=1 OR placement_home=1)
+           AND start_date <= CURDATE() AND end_date >= CURDATE()
+         ORDER BY priority DESC, RAND() LIMIT 1`
+      );
+      const [fallbackUser] = await pool.query(
+        `SELECT ua.id, ua.title, ua.description, ua.ad_type, ua.media_url, ua.media_type,
+                ua.cta_text, ua.cta_url, ua.action_type, ua.phone_number, ua.whatsapp_number,
+                ua.lead_fields, ua.cost_per_click, ua.cost_per_impression, ua.cost_per_lead,
+                '#1a2433' as bg_color, '#ffffff' as text_color,
+                '#00bfa5' as border_color, ua.advertiser_name, NULL as advertiser_logo,
+                ua.priority, 'user' as source
+         FROM user_ads ua WHERE ua.status='approved'
+           AND (ua.placement_status=1 OR ua.placement_chat=1 OR ua.placement_calls=1 OR ua.placement_home=1)
+           AND ua.start_date <= CURDATE() AND ua.end_date >= CURDATE()
+           AND (ua.budget = 0 OR ua.spent < ua.budget)
+         ORDER BY RAND() LIMIT 1`
+      );
+      combined = [...fallbackSys, ...fallbackUser].slice(0, 1);
+    }
+
+    res.json(combined);
   } catch(e) { res.json([]); }
 });
 
+async function chargeUserAdEvent(adId, eventType, viewerUserId, placement, leadData = null) {
+  const [ads] = await pool.query('SELECT * FROM user_ads WHERE id=?', [adId]);
+  if (!ads.length || !['approved'].includes(ads[0].status)) return false;
+  const ad = ads[0];
+  const costMap = {
+    impression: Number(ad.cost_per_impression || 0),
+    click: Number(ad.cost_per_click || 0),
+    call: Number(ad.cost_per_click || 0),
+    whatsapp: Number(ad.cost_per_click || 0),
+    website_visit: Number(ad.cost_per_click || 0),
+    lead: Number(ad.cost_per_lead || ad.cost_per_click || 0)
+  };
+  const cost = costMap[eventType] ?? 0;
+  if (eventType === 'impression') {
+    await pool.query('UPDATE user_ads SET impressions=impressions+1, spent=spent+? WHERE id=?', [cost, adId]);
+  } else if (eventType === 'lead') {
+    await pool.query('UPDATE user_ads SET leads=leads+1, spent=spent+? WHERE id=?', [cost, adId]);
+    await pool.query('INSERT INTO user_ad_leads (ad_id, owner_user_id, viewer_user_id, lead_data, cost) VALUES (?,?,?,?,?)',
+      [adId, ad.user_id, viewerUserId || null, JSON.stringify(leadData || {}), cost]);
+  } else {
+    await pool.query('UPDATE user_ads SET clicks=clicks+1, spent=spent+? WHERE id=?', [cost, adId]);
+  }
+  await pool.query(
+    'INSERT INTO user_ad_events (ad_id, owner_user_id, viewer_user_id, event_type, placement, cost) VALUES (?,?,?,?,?,?)',
+    [adId, ad.user_id, viewerUserId || null, eventType, placement || null, cost]
+  );
+  if (cost > 0) {
+    await pool.query(
+      'UPDATE ad_balance SET balance=GREATEST(balance-?,0), total_spent=total_spent+? WHERE user_id=?',
+      [cost, cost, ad.user_id]
+    );
+  }
+  await pool.query(
+    `UPDATE user_ads ua
+     LEFT JOIN ad_balance ab ON ab.user_id=ua.user_id
+     SET ua.status='ended'
+     WHERE ua.id=? AND ((ua.budget > 0 AND ua.spent >= ua.budget) OR COALESCE(ab.balance,0) <= 0)`,
+    [adId]
+  );
+  return true;
+}
+
 // Track ad event for user ads
 router.post('/user-ads/:id/event', async (req, res) => {
-  const { eventType = 'impression', userId } = req.body;
+  const { eventType = 'impression', userId, placement, leadData } = req.body;
   try {
-    const [ads] = await pool.query('SELECT user_id,cost_per_impression,cost_per_click FROM user_ads WHERE id=?', [req.params.id]);
-    if (!ads.length) return res.json({ ok: false });
-    const cost = eventType === 'click' ? Number(ads[0].cost_per_click || 0) : Number(ads[0].cost_per_impression || 0);
+    const ok = await chargeUserAdEvent(req.params.id, eventType, userId, placement, leadData);
+    res.json({ ok });
+  } catch { res.json({ ok: false }); }
+});
+
+router.post('/ads/:id/event', async (req, res) => {
+  const { eventType = 'impression', userId, placement } = req.body;
+  try {
+    await pool.query('INSERT INTO ad_events (ad_id, user_id, event_type, placement, ip_address) VALUES (?,?,?,?,?)',
+      [req.params.id, userId || null, eventType === 'website_visit' ? 'click' : eventType, placement || null, req.ip]);
     if (eventType === 'impression') {
-      await pool.query(
-        'UPDATE user_ads SET impressions=impressions+1, spent=spent+cost_per_impression WHERE id=?',
-        [req.params.id]
-      );
-    } else if (eventType === 'click') {
-      await pool.query(
-        'UPDATE user_ads SET clicks=clicks+1, spent=spent+cost_per_click WHERE id=?',
-        [req.params.id]
-      );
+      await pool.query('UPDATE ads SET impressions=impressions+1, spend=spend+cost_per_impression WHERE id=?', [req.params.id]);
+    } else {
+      await pool.query('UPDATE ads SET clicks=clicks+1, spend=spend+cost_per_click WHERE id=?', [req.params.id]);
     }
-    if (cost > 0) {
-      await pool.query(
-        'UPDATE ad_balance SET balance=GREATEST(balance-?,0), total_spent=total_spent+? WHERE user_id=?',
-        [cost, cost, ads[0].user_id]
-      );
-    }
-    // Auto-end if budget exhausted
-    await pool.query(
-      `UPDATE user_ads ua
-       LEFT JOIN ad_balance ab ON ab.user_id=ua.user_id
-       SET ua.status='ended'
-       WHERE ua.id=? AND ((ua.budget > 0 AND ua.spent >= ua.budget) OR COALESCE(ab.balance,0) <= 0)`,
-      [req.params.id]
-    );
+    await pool.query(`UPDATE ads SET status='ended' WHERE id=? AND status='active' AND budget > 0 AND spend >= budget`, [req.params.id]);
     res.json({ ok: true });
   } catch { res.json({ ok: false }); }
+});
+
+router.get('/user-ads/:id/leads', requireAuth, async (req, res) => {
+  try {
+    const [ad] = await pool.query('SELECT id FROM user_ads WHERE id=? AND user_id=?', [req.params.id, req.user.id]);
+    if (!ad.length) return res.status(404).json({ error: 'Ad not found' });
+    const [leads] = await pool.query('SELECT * FROM user_ad_leads WHERE ad_id=? ORDER BY created_at DESC', [req.params.id]);
+    leads.forEach(l => { try { l.lead_data = typeof l.lead_data === 'string' ? JSON.parse(l.lead_data) : l.lead_data; } catch {} });
+    res.json(leads);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Payment gateways (admin)
