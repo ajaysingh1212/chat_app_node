@@ -725,12 +725,19 @@ async function renderAdsQuickPanel(){
   const el = document.getElementById('adsQuickSummary');
   if(!el) return;
 
+  const token = localStorage.getItem('chatapp_token');
+
+  if(!token){
+    el.innerHTML = `<small>Please login again</small>`;
+    return;
+  }
+
   try{
     const r = await fetch('/api/ads/diagnostics', {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + myToken
+        'Authorization': 'Bearer ' + token
       }
     });
 
